@@ -1,10 +1,11 @@
 //+------------------------------------------------------------------+
 //| TrendEURUSD_v1.mq5                                               |
-//| Nomo - impulso EURUSD + trailing SL/TP (spread baixo ~13 pts)    |
-//| v1.10: soft lock antes do trailing completo                      |
+//| Nomo - trend EURUSD filtrado (EMA50/200 + ADX + SL ATR)          |
+//| v1.20: EMA cruzada + ADX + stop/take por ATR + soft lock         |
+//| Grafico recomendado: EURUSD M30 (ou H1)                          |
 //+------------------------------------------------------------------+
 #property copyright "Vitor"
-#property version   "1.10"
+#property version   "1.20"
 #property strict
 
 input double InpRiskPercent      = 0.50;  // Risco por trade (% saldo)
@@ -12,35 +13,42 @@ input double InpMaxLots          = 1.00;  // Teto de lote
 input bool   InpUseFixedLots     = false;
 input double InpFixedLots        = 0.01;
 
+//--- entrada / tendencia
 input int    InpBreakBars        = 8;     // Rompe max/min dos ultimos N candles
-input int    InpMaPeriod         = 20;    // EMA (filtro leve)
-input bool   InpUseEmaFilter     = true;
-input double InpMinBodyATR       = 0.60;  // Corpo minimo = fator * ATR
+input int    InpEmaFast          = 50;    // EMA rapida (tendencia)
+input int    InpEmaSlow          = 200;   // EMA lenta (tendencia)
+input bool   InpUseEmaTrend      = true;  // BUY so se EMA50>EMA200; SELL inverso
+input int    InpADXPeriod        = 14;
+input double InpMinADX           = 22.0;  // ADX minimo (forca da tendencia)
+input bool   InpUseADXFilter     = true;
+input double InpMinBodyATR       = 0.50;  // Corpo minimo = fator * ATR
 input int    InpATRPeriod        = 14;
 
-// Calibrado para EURUSD Nomo (spread tipico ~13 pts)
-input int    InpStopPoints       = 350;   // SL ~35 pips
-input int    InpTakePoints       = 700;   // TP ~70 pips
-input int    InpTrailStartPoints = 250;   // Trailing apos ~25 pips de lucro
-input int    InpTrailStepPoints  = 100;   // Degrau trailing ~10 pips
-input int    InpLockPoints       = 80;    // SL travado ~8 pips atras
-input int    InpSoftLockStart    = 100;   // Trava lucro minimo antes do trail
-input int    InpSoftLockPts      = 35;    // SL = entrada + X pts
+//--- stops / alvos por ATR (recomendacao: SL 1.5 ATR, alvo ~2x risco)
+input double InpStopATRMult      = 1.50;  // SL = ATR * este fator
+input double InpRewardRisk       = 2.00;  // TP = SL_dist * R:R
+input double InpSoftLockStartATR = 0.45;  // Arma soft lock apos lucro = X * ATR
+input double InpSoftLockATR      = 0.15;  // Trava lucro minimo = X * ATR
+input double InpTrailStartATR    = 0.90;  // Trailing completo apos X * ATR
+input double InpTrailStepATR     = 0.35;  // Degrau trailing (ATR)
+input double InpLockATR          = 0.30;  // SL atras do preco (ATR)
 
 input int    InpMaxSpreadPoints  = 40;    // Spread max (normal ~13)
-input double InpMinStopSpreadMult= 1.5;
-input int    InpMaxOpenPositions = 3;
-input int    InpMaxTradesDay     = 8;
+input double InpMinStopSpreadMult= 1.5;   // Bloqueia se stop < 1.5x spread
+input int    InpMaxOpenPositions = 2;     // Mais seletivo na v1.20
+input int    InpMaxTradesDay     = 6;
 input double InpMaxLossDayPct    = 2.0;
-input int    InpMagic            = 260828; // Diferente do ScalpEURUSD (260827)
+input int    InpMagic            = 260828;
 
-input bool   InpCloseBeforeSwap  = false; // Forex: pode carregar; ative se quiser flat diario
+input bool   InpCloseBeforeSwap  = false;
 input int    InpFlatHour         = 21;
 input int    InpFlatMinute       = 50;
 input bool   InpVerboseLog       = true;
 
-int maHandle  = INVALID_HANDLE;
-int atrHandle = INVALID_HANDLE;
+int emaFastHandle = INVALID_HANDLE;
+int emaSlowHandle = INVALID_HANDLE;
+int atrHandle     = INVALID_HANDLE;
+int adxHandle     = INVALID_HANDLE;
 int tradesToday = 0;
 double dayStartBalance = 0.0;
 int dayStamp = 0;
@@ -48,30 +56,33 @@ datetime lastBarChecked = 0;
 
 int OnInit()
 {
-   maHandle  = iMA(_Symbol, PERIOD_CURRENT, InpMaPeriod, 0, MODE_EMA, PRICE_CLOSE);
-   atrHandle = iATR(_Symbol, PERIOD_CURRENT, InpATRPeriod);
-   if(maHandle == INVALID_HANDLE || atrHandle == INVALID_HANDLE)
+   emaFastHandle = iMA(_Symbol, PERIOD_CURRENT, InpEmaFast, 0, MODE_EMA, PRICE_CLOSE);
+   emaSlowHandle = iMA(_Symbol, PERIOD_CURRENT, InpEmaSlow, 0, MODE_EMA, PRICE_CLOSE);
+   atrHandle     = iATR(_Symbol, PERIOD_CURRENT, InpATRPeriod);
+   adxHandle     = iADX(_Symbol, PERIOD_CURRENT, InpADXPeriod);
+   if(emaFastHandle == INVALID_HANDLE || emaSlowHandle == INVALID_HANDLE ||
+      atrHandle == INVALID_HANDLE || adxHandle == INVALID_HANDLE)
       return INIT_FAILED;
 
    ResetDayIfNeeded();
 
    int spr = CurrentSpreadPoints();
-   double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
-   Print("TrendEURUSD_v1.10 | ", _Symbol, " ", EnumToString(_Period));
+   Print("TrendEURUSD_v1.20 | ", _Symbol, " ", EnumToString(_Period));
+   Print("EMA", InpEmaFast, "/", InpEmaSlow, " | ADX>=", DoubleToString(InpMinADX, 1),
+         " | SL=", DoubleToString(InpStopATRMult, 2), "xATR | RR=", DoubleToString(InpRewardRisk, 2));
+   Print("softLock=", DoubleToString(InpSoftLockStartATR, 2), "xATR (+",
+         DoubleToString(InpSoftLockATR, 2), ") | trail=", DoubleToString(InpTrailStartATR, 2), "xATR");
    Print("maxPos=", InpMaxOpenPositions, " | spread=", spr, " pts | max=", InpMaxSpreadPoints);
-   Print("stop=", InpStopPoints, " | take=", InpTakePoints, " | softLock=", InpSoftLockStart,
-         "+", InpSoftLockPts, " | trail=", InpTrailStartPoints);
-
-   if(InpStopPoints < (int)MathCeil(spr * InpMinStopSpreadMult))
-      Print("AVISO: stop curto vs spread. Ajuste InpStopPoints.");
 
    return INIT_SUCCEEDED;
 }
 
 void OnDeinit(const int reason)
 {
-   if(maHandle != INVALID_HANDLE)  IndicatorRelease(maHandle);
-   if(atrHandle != INVALID_HANDLE) IndicatorRelease(atrHandle);
+   if(emaFastHandle != INVALID_HANDLE) IndicatorRelease(emaFastHandle);
+   if(emaSlowHandle != INVALID_HANDLE) IndicatorRelease(emaSlowHandle);
+   if(atrHandle != INVALID_HANDLE)     IndicatorRelease(atrHandle);
+   if(adxHandle != INVALID_HANDLE)     IndicatorRelease(adxHandle);
 }
 
 void OnTick()
@@ -107,6 +118,8 @@ void OnTick()
 
    int spread = CurrentSpreadPoints();
    double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+   if(point <= 0.0)
+      return;
 
    if(spread > InpMaxSpreadPoints)
    {
@@ -115,24 +128,40 @@ void OnTick()
       return;
    }
 
+   int needBars = MathMax(InpBreakBars, MathMax(InpEmaSlow, MathMax(InpATRPeriod, InpADXPeriod))) + 5;
+   if(Bars(_Symbol, PERIOD_CURRENT) < needBars)
+      return;
+
+   double emaFast[], emaSlow[], atr[], adx[];
+   if(CopyBuffer(emaFastHandle, 0, 1, 3, emaFast) < 3) return;
+   if(CopyBuffer(emaSlowHandle, 0, 1, 3, emaSlow) < 3) return;
+   if(CopyBuffer(atrHandle, 0, 1, 3, atr) < 3) return;
+   if(CopyBuffer(adxHandle, 0, 1, 3, adx) < 3) return; // buffer 0 = ADX main
+   ArraySetAsSeries(emaFast, true);
+   ArraySetAsSeries(emaSlow, true);
+   ArraySetAsSeries(atr, true);
+   ArraySetAsSeries(adx, true);
+
+   if(atr[1] <= 0.0)
+      return;
+
+   int stopPts = (int)MathRound((atr[1] * InpStopATRMult) / point);
+   if(stopPts < 1) stopPts = 1;
+
    int minStop = (int)MathCeil(spread * InpMinStopSpreadMult);
-   if(InpStopPoints < minStop)
+   if(stopPts < minStop)
    {
       if(InpVerboseLog)
-         Print("Skip: stop ", InpStopPoints, " < ", minStop);
+         Print("Skip: stop ATR ", stopPts, " pts < ", minStop, " (1.5x spread)");
       return;
    }
 
-   if(Bars(_Symbol, PERIOD_CURRENT) < MathMax(InpBreakBars, InpATRPeriod) + 5)
+   if(InpUseADXFilter && adx[1] < InpMinADX)
+   {
+      if(InpVerboseLog)
+         Print("Skip: ADX fraco ", DoubleToString(adx[1], 1), " < ", InpMinADX);
       return;
-
-   double ma[], atr[];
-   if(CopyBuffer(maHandle, 0, 1, 3, ma) < 3)
-      return;
-   if(CopyBuffer(atrHandle, 0, 1, 3, atr) < 3)
-      return;
-   ArraySetAsSeries(ma, true);
-   ArraySetAsSeries(atr, true);
+   }
 
    double close1 = iClose(_Symbol, PERIOD_CURRENT, 1);
    double open1  = iOpen(_Symbol, PERIOD_CURRENT, 1);
@@ -157,43 +186,65 @@ void OnTick()
 
    bool bull = (close1 > open1);
    bool bear = (close1 < open1);
+   bool upTrend   = (emaFast[1] > emaSlow[1]);
+   bool downTrend = (emaFast[1] < emaSlow[1]);
 
    if(bull && close1 > hh)
    {
-      if(InpUseEmaFilter && close1 < ma[1])
+      if(InpUseEmaTrend && !upTrend)
       {
          if(InpVerboseLog)
-            Print("Skip BUY: abaixo da EMA", InpMaPeriod);
+            Print("Skip BUY: EMA", InpEmaFast, " <= EMA", InpEmaSlow);
       }
       else
       {
-         Print("SINAL BUY | spread=", spread, " | close=", close1);
-         OpenTrade(ORDER_TYPE_BUY);
+         Print("SINAL BUY | ADX=", DoubleToString(adx[1], 1),
+               " | ATR=", DoubleToString(atr[1] / point, 1), "pts",
+               " | SL=", stopPts, "pts | spread=", spread);
+         OpenTrade(ORDER_TYPE_BUY, atr[1]);
          return;
       }
    }
 
    if(bear && close1 < ll)
    {
-      if(InpUseEmaFilter && close1 > ma[1])
+      if(InpUseEmaTrend && !downTrend)
       {
          if(InpVerboseLog)
-            Print("Skip SELL: acima da EMA", InpMaPeriod);
+            Print("Skip SELL: EMA", InpEmaFast, " >= EMA", InpEmaSlow);
       }
       else
       {
-         Print("SINAL SELL | spread=", spread, " | close=", close1);
-         OpenTrade(ORDER_TYPE_SELL);
+         Print("SINAL SELL | ADX=", DoubleToString(adx[1], 1),
+               " | ATR=", DoubleToString(atr[1] / point, 1), "pts",
+               " | SL=", stopPts, "pts | spread=", spread);
+         OpenTrade(ORDER_TYPE_SELL, atr[1]);
          return;
       }
    }
 
    if(InpVerboseLog)
-      Print("Skip: sem rompimento | close=", close1, " hh=", hh, " ll=", ll);
+      Print("Skip: sem rompimento | close=", close1, " hh=", hh, " ll=", ll,
+            " | ADX=", DoubleToString(adx[1], 1));
 }
 
 void ManageTrailing()
 {
+   double atrNow = CurrentATR();
+   if(atrNow <= 0.0)
+      return;
+
+   double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+   if(point <= 0.0)
+      return;
+
+   int softStartPts = MathMax(1, (int)MathRound((atrNow * InpSoftLockStartATR) / point));
+   int softLockPts  = MathMax(1, (int)MathRound((atrNow * InpSoftLockATR) / point));
+   int trailStartPts= MathMax(softStartPts + 1, (int)MathRound((atrNow * InpTrailStartATR) / point));
+   int trailStepPts = MathMax(1, (int)MathRound((atrNow * InpTrailStepATR) / point));
+   int lockPts      = MathMax(1, (int)MathRound((atrNow * InpLockATR) / point));
+   int takePtsBase  = MathMax(1, (int)MathRound((atrNow * InpStopATRMult * InpRewardRisk) / point));
+
    for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
       ulong ticket = PositionGetTicket(i);
@@ -205,7 +256,6 @@ void ManageTrailing()
       double openPx = PositionGetDouble(POSITION_PRICE_OPEN);
       double sl     = PositionGetDouble(POSITION_SL);
       double tp     = PositionGetDouble(POSITION_TP);
-      double point  = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
       int    digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
       double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
       double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
@@ -217,47 +267,47 @@ void ManageTrailing()
       double newSL = sl;
       double newTP = tp;
 
-      if(favorMove >= InpSoftLockStart && favorMove < InpTrailStartPoints)
+      if(favorMove >= softStartPts && favorMove < trailStartPts)
       {
          if(type == POSITION_TYPE_BUY)
          {
-            double softSL = openPx + InpSoftLockPts * point;
+            double softSL = openPx + softLockPts * point;
             if(softSL > sl + point)
                newSL = softSL;
          }
          else
          {
-            double softSL = openPx - InpSoftLockPts * point;
+            double softSL = openPx - softLockPts * point;
             if(sl == 0.0 || softSL < sl - point)
                newSL = softSL;
          }
       }
 
-      if(favorMove >= InpTrailStartPoints)
+      if(favorMove >= trailStartPts)
       {
-         int steps = (int)MathFloor((favorMove - InpTrailStartPoints) / InpTrailStepPoints) + 1;
+         int steps = (int)MathFloor((favorMove - trailStartPts) / trailStepPts) + 1;
 
          if(type == POSITION_TYPE_BUY)
          {
-            double desiredSL = bid - InpLockPoints * point;
+            double desiredSL = bid - lockPts * point;
             if(desiredSL > newSL + point)
                newSL = desiredSL;
-            double desiredTP = openPx + (InpTakePoints + steps * InpTrailStepPoints) * point;
+            double desiredTP = openPx + (takePtsBase + steps * trailStepPts) * point;
             if(desiredTP > tp + point)
                newTP = desiredTP;
          }
          else
          {
-            double desiredSL = ask + InpLockPoints * point;
+            double desiredSL = ask + lockPts * point;
             if(newSL == 0.0 || desiredSL < newSL - point)
                newSL = desiredSL;
-            double desiredTP = openPx - (InpTakePoints + steps * InpTrailStepPoints) * point;
+            double desiredTP = openPx - (takePtsBase + steps * trailStepPts) * point;
             if(tp == 0.0 || desiredTP < tp - point)
                newTP = desiredTP;
          }
       }
 
-      if(favorMove < InpSoftLockStart)
+      if(favorMove < softStartPts)
          continue;
 
       newSL = NormalizeDouble(newSL, digits);
@@ -278,9 +328,20 @@ void ManageTrailing()
 
       if(!OrderSend(request, result))
          Print("Falha trailing ticket=", ticket, " err=", GetLastError());
+      else if(favorMove >= trailStartPts)
+         Print("TRAIL ticket=", ticket, " SL ", sl, "->", newSL, " TP ", tp, "->", newTP);
       else
-         Print("Trailing ticket=", ticket, " SL ", sl, "->", newSL, " TP ", tp, "->", newTP);
+         Print("SOFT ticket=", ticket, " SL ", sl, "->", newSL);
    }
+}
+
+double CurrentATR()
+{
+   double atr[];
+   if(CopyBuffer(atrHandle, 0, 0, 2, atr) < 2)
+      return 0.0;
+   ArraySetAsSeries(atr, true);
+   return atr[0];
 }
 
 bool IsFlatWindow()
@@ -298,20 +359,19 @@ int CurrentSpreadPoints()
    return (int)MathRound((SymbolInfoDouble(_Symbol, SYMBOL_ASK) - SymbolInfoDouble(_Symbol, SYMBOL_BID)) / point);
 }
 
-double CalculateLots()
+double CalculateLots(const double stopDistPrice)
 {
    if(InpUseFixedLots)
       return NormalizeLots(InpFixedLots);
 
    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
    double moneyRisk = balance * (InpRiskPercent / 100.0);
-   double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
    double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
    double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
-   if(tickSize <= 0.0 || tickValue <= 0.0 || InpStopPoints <= 0)
+   if(tickSize <= 0.0 || tickValue <= 0.0 || stopDistPrice <= 0.0)
       return NormalizeLots(SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN));
 
-   double lossPerLot = ((InpStopPoints * point) / tickSize) * tickValue;
+   double lossPerLot = (stopDistPrice / tickSize) * tickValue;
    if(lossPerLot <= 0.0)
       return NormalizeLots(SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN));
 
@@ -400,9 +460,14 @@ void CloseOurPositions(const string reason)
    }
 }
 
-bool OpenTrade(ENUM_ORDER_TYPE type)
+bool OpenTrade(ENUM_ORDER_TYPE type, const double atrValue)
 {
-   double lots = CalculateLots();
+   if(atrValue <= 0.0)
+      return false;
+
+   double stopDist = atrValue * InpStopATRMult;
+   double takeDist = stopDist * InpRewardRisk;
+   double lots = CalculateLots(stopDist);
    if(lots < SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN))
       return false;
 
@@ -414,7 +479,6 @@ bool OpenTrade(ENUM_ORDER_TYPE type)
    double price = (type == ORDER_TYPE_BUY)
                   ? SymbolInfoDouble(_Symbol, SYMBOL_ASK)
                   : SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
    int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
 
    request.action = TRADE_ACTION_DEAL;
@@ -423,14 +487,14 @@ bool OpenTrade(ENUM_ORDER_TYPE type)
    request.type = type;
    request.price = NormalizeDouble(price, digits);
    request.sl = NormalizeDouble((type == ORDER_TYPE_BUY)
-                ? price - InpStopPoints * point
-                : price + InpStopPoints * point, digits);
+                ? price - stopDist
+                : price + stopDist, digits);
    request.tp = NormalizeDouble((type == ORDER_TYPE_BUY)
-                ? price + InpTakePoints * point
-                : price - InpTakePoints * point, digits);
+                ? price + takeDist
+                : price - takeDist, digits);
    request.deviation = 30;
    request.magic = InpMagic;
-   request.comment = "TrendEURUSD_v1.10";
+   request.comment = "TrendEURUSD_v1.20";
    request.type_filling = ResolveFilling();
 
    if(!OrderSend(request, result))
@@ -446,6 +510,8 @@ bool OpenTrade(ENUM_ORDER_TYPE type)
 
    tradesToday++;
    Print("ENTROU ", EnumToString(type), " lote=", DoubleToString(lots, 2),
+         " SL=", request.sl, " TP=", request.tp,
+         " (ATR SL=", DoubleToString(InpStopATRMult, 2), "x RR=", DoubleToString(InpRewardRisk, 2), ")",
          " abertas=", CountOpenPositions(), "/", InpMaxOpenPositions,
          " spread=", CurrentSpreadPoints());
    return true;
