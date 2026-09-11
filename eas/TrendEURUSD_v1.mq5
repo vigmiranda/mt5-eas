@@ -1,11 +1,11 @@
 //+------------------------------------------------------------------+
 //| TrendEURUSD_v1.mq5                                               |
 //| Nomo - trend EURUSD filtrado (EMA50/200 + ADX + SL ATR)          |
-//| v1.21: sem TP - soft lock progressivo no SL (estilo NMAI)        |
+//| v1.22: soft lock mais folgado (arma mais tarde, trail mais longe)|
 //| Grafico recomendado: EURUSD M30 (ou H1)                          |
 //+------------------------------------------------------------------+
 #property copyright "Vitor"
-#property version   "1.21"
+#property version   "1.22"
 #property strict
 
 input double InpRiskPercent      = 0.50;  // Risco por trade (% saldo)
@@ -26,9 +26,9 @@ input int    InpATRPeriod        = 14;
 
 //--- stops por ATR + soft lock progressivo (SEM TP / sem mira)
 input double InpStopATRMult      = 1.50;  // SL inicial = ATR * este fator
-input double InpSoftLockStartATR = 0.45;  // Arma soft lock apos lucro = X * ATR
-input double InpSoftLockATR      = 0.15;  // Lucro minimo travado = X * ATR
-input double InpTrailLockATR     = 0.30;  // Soft lock sobe: SL = preco - X * ATR
+input double InpSoftLockStartATR = 0.70;  // Arma soft lock apos lucro = X * ATR (mais folga)
+input double InpSoftLockATR      = 0.25;  // Lucro minimo travado = X * ATR
+input double InpTrailLockATR     = 0.50;  // Soft lock sobe: SL = preco - X * ATR
 
 input int    InpMaxSpreadPoints  = 40;    // Spread max (normal ~13)
 input double InpMinStopSpreadMult= 1.5;   // Bloqueia se stop < 1.5x spread
@@ -64,7 +64,7 @@ int OnInit()
    ResetDayIfNeeded();
 
    int spr = CurrentSpreadPoints();
-   Print("TrendEURUSD_v1.21 | ", _Symbol, " ", EnumToString(_Period));
+   Print("TrendEURUSD_v1.22 | ", _Symbol, " ", EnumToString(_Period));
    Print("EMA", InpEmaFast, "/", InpEmaSlow, " | ADX>=", DoubleToString(InpMinADX, 1),
          " | SL=", DoubleToString(InpStopATRMult, 2), "xATR | sem TP | softLock progressivo");
    Print("armSoft=", DoubleToString(InpSoftLockStartATR, 2), "xATR | lockMin=",
@@ -463,7 +463,7 @@ bool OpenTrade(ENUM_ORDER_TYPE type, const double atrValue)
    request.tp = 0.0; // sem mira — so soft lock progressivo
    request.deviation = 30;
    request.magic = InpMagic;
-   request.comment = "TrendEURUSD_v1.21";
+   request.comment = "TrendEURUSD_v1.22";
    request.type_filling = ResolveFilling();
 
    if(!OrderSend(request, result))

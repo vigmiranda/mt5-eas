@@ -5,7 +5,7 @@
 //| Grafico: USDJPY M5 | sessao Londres/NY | 1 posicao               |
 //+------------------------------------------------------------------+
 #property copyright "Vitor"
-#property version   "2.00"
+#property version   "2.01"
 #property strict
 
 input double InpRiskPercent      = 0.30;  // Risco por trade (% saldo) - daytrade
@@ -26,9 +26,9 @@ input int    InpATRPeriod        = 14;
 
 //--- stops ATR + soft lock progressivo (SEM TP)
 input double InpStopATRMult      = 1.30;  // SL inicial = ATR * fator
-input double InpSoftLockStartATR = 0.40;  // Arma soft lock apos lucro = X * ATR
-input double InpSoftLockATR      = 0.12;  // Lucro minimo travado = X * ATR
-input double InpTrailLockATR     = 0.25;  // Soft lock sobe: SL = preco +/- X * ATR
+input double InpSoftLockStartATR = 0.80;  // Arma soft lock apos lucro = X * ATR (mais folga)
+input double InpSoftLockATR      = 0.25;  // Lucro minimo travado = X * ATR
+input double InpTrailLockATR     = 0.45;  // Soft lock sobe: SL = preco +/- X * ATR
 
 input int    InpMaxSpreadPoints  = 35;    // Spread max JPY (normal baixo)
 input double InpMinStopSpreadMult= 1.5;
@@ -69,7 +69,7 @@ int OnInit()
    ResetDayIfNeeded();
 
    int spr = CurrentSpreadPoints();
-   Print("ScalpUSDJPY_v2.00 | ", _Symbol, " ", EnumToString(_Period));
+   Print("ScalpUSDJPY_v2.01 | ", _Symbol, " ", EnumToString(_Period));
    Print("DAYTRADE seletivo | EMA", InpEmaFast, "/", InpEmaSlow,
          " | ADX>=", DoubleToString(InpMinADX, 1),
          " | SL=", DoubleToString(InpStopATRMult, 2), "xATR | sem TP");

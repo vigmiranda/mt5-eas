@@ -6,8 +6,8 @@ Coleção de EAs (Expert Advisors) para operação automatizada na **Nomo (MetaT
 
 | Par      | Timeframe | EA                 | Magic  | Versão | Papel |
 |----------|-----------|--------------------|--------|--------|-------|
-| EURUSD   | M30       | TrendEURUSD_v1     | 260828 | 1.21   | Trend filtrado |
-| USDJPY   | M5        | ScalpUSDJPY_v2     | 260830 | 2.00   | Daytrade seletivo |
+| EURUSD   | M30       | TrendEURUSD_v1     | 260828 | 1.22   | Trend filtrado |
+| USDJPY   | M5        | ScalpUSDJPY_v2     | 260830 | 2.01   | Daytrade seletivo |
 
 Demais EAs ficam no repo para referência; use com cautela (crypto/spread).
 
@@ -15,8 +15,8 @@ Demais EAs ficam no repo para referência; use com cautela (crypto/spread).
 
 | Par      | Timeframe | EA                 | Magic  | Versão |
 |----------|-----------|--------------------|--------|--------|
-| EURUSD   | M30       | TrendEURUSD_v1     | 260828 | 1.21   |
-| USDJPY   | M5        | ScalpUSDJPY_v2     | 260830 | 2.00   |
+| EURUSD   | M30       | TrendEURUSD_v1     | 260828 | 1.22   |
+| USDJPY   | M5        | ScalpUSDJPY_v2     | 260830 | 2.01   |
 | XRPUSD   | M30       | TrendXRPUSD_v1     | 300831 | 1.40   |
 | DOGEUSD  | M30       | TrendMeme_Pct_v1   | 310901 | 1.10   |
 | BTCUSD   | H1        | TrendBTCUSD_v1     | 310903 | 1.10   |
@@ -34,7 +34,7 @@ Demais EAs ficam no repo para referência; use com cautela (crypto/spread).
 
 ## Proteção de lucro (soft lock)
 
-**TrendEURUSD v1.21** e **ScalpUSDJPY v2**: EMA 50/200 + ADX + SL por ATR, **sem TP**. Soft lock progressivo sobe o SL com o lucro.
+**TrendEURUSD v1.22** e **ScalpUSDJPY v2.01**: EMA 50/200 + ADX + SL por ATR, **sem TP**. Soft lock mais folgado (arma mais tarde; trail mais longe do preço).
 
 **ScalpUSDJPY v2** extras (daytrade):
 - ADX ≥ 25, risco 0,30%, 1 posição, máx. 6 trades/dia
@@ -45,8 +45,8 @@ Demais EAs ficam no repo para referência; use com cautela (crypto/spread).
 
 ```
 eas/
-  TrendEURUSD_v1.mq5    # Trend forex v1.21
-  ScalpUSDJPY_v2.mq5    # Daytrade JPY v2.00 (filtrado)
+  TrendEURUSD_v1.mq5    # Trend forex v1.22 (soft lock folgado)
+  ScalpUSDJPY_v2.mq5    # Daytrade JPY v2.01 (soft lock folgado)
   TrendXRPUSD_v1.mq5
   TrendBTCUSD_v1.mq5
   TrendWTIUSD_v1.mq5
