@@ -1,6 +1,7 @@
 //+------------------------------------------------------------------+
 //| ScalpUSDJPY_v2.mq5                                               |
-//| Nomo - daytrade USDJPY seletivo (mesma pegada TrendEURUSD v1.21) |
+//| Nomo - daytrade USDJPY seletivo (mesma pegada TrendEURUSD)       |
+//| v2.01: soft lock mais folgado (arma mais tarde, trail mais longe)|
 //| EMA50/200 + ADX + SL ATR + soft lock progressivo | SEM TP        |
 //| Grafico: USDJPY M5 | sessao Londres/NY | 1 posicao               |
 //+------------------------------------------------------------------+
