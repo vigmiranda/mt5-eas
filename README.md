@@ -1,5 +1,7 @@
 # MT5 Expert Advisors — Nomo + Clear
 
+Repositório: [vigmiranda/mt5-eas](https://github.com/vigmiranda/mt5-eas)
+
 Automação em **MetaTrader 5** para duas corretoras:
 
 | Pasta | Corretora | Mercado |
