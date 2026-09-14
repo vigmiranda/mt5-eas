@@ -13,13 +13,14 @@ Automação em **MetaTrader 5** para duas corretoras:
 
 | Ativo | Timeframe | EA | Magic | Versão | Papel |
 |-------|-----------|----|-------|--------|-------|
-| WIN$ | M5 | TrendWIN_v1 | 260914 | 1.10 | Daytrade tendência |
+| WIN$ | M5 | TrendWIN_v1 | 260914 | 1.11 | Daytrade tendência |
 
 **TrendWIN_v1**
 - EMA 50/200 + ADX ≥ 25 + SL por ATR, **sem TP** (soft lock / trail)
 - Sessão 10:15–16:45, flat ~17:00 (horário do servidor)
 - **Volume automático:** 1 minicontrato a cada **R$ 1.000** de capital
-- Stop diário: **5%** do capital
+- Stop diário: **5%** do capital (zera posição e trava o dia)
+- Filtro de spread + validação de stops level (Clear)
 - Se o MT5 da Clear mostrar saldo 0, usa `FallbackCapital` + PnL do próprio EA
 
 Instalação: copie `eas/clear/TrendWIN_v1.mq5` → `MQL5/Experts/`, compile (F7), arraste no gráfico **WIN$ M5**.

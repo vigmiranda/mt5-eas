@@ -2,9 +2,10 @@
 //| TrendWIN_v1.mq5                                                   |
 //| Daytrade WIN$ (Clear/MT5) - EMA50/200 + ADX + soft lock           |
 //| Volume automático conforme capital (padrão: 1 mini / R$ 1.000)    |
+//| v1.11: flat no stop diário, filtro de spread, stops level         |
 //+------------------------------------------------------------------+
 #property copyright "Vitor / Nomo-MT5 line"
-#property version   "1.10"
+#property version   "1.11"
 #property strict
 
 #include <Trade/Trade.mqh>
@@ -28,8 +29,10 @@ input double InpMinCapitalTrade  = 800.0;    // Abaixo disso não opera
 
 input group "=== Risco diário ==="
 input double InpDailyLossPercent = 5.0;      // Para o dia se prejuízo >= X% do capital
+input bool   InpFlatOnDailyLoss  = true;     // Zera posição ao bater o stop diário
 input int    InpMaxTradesDay     = 4;        // Máx. entradas no dia
 input int    InpMaxPositions     = 1;        // Só 1 posição
+input int    InpMaxSpreadPoints  = 80;       // Spread máx. (WIN costuma ser baixo; abre largo)
 
 input group "=== Sessão (horário do servidor MT5) ==="
 input int    InpStartHour       = 10;      // Clear costuma ser BRT
@@ -59,12 +62,15 @@ input group "=== Geral ==="
 input long   InpMagic           = 260914;
 input int    InpSlippagePoints  = 30;
 input string InpTradeComment    = "TrendWIN_v1";
+input bool   InpVerboseLog      = true;
 
 //------------------------ Estado ------------------------------------
 datetime g_dayStart = 0;
 double   g_dayStartEquity = 0.0;
 int      g_tradesToday = 0;
 datetime g_lastBarTime = 0;
+bool     g_dayStopped = false;
+bool     g_loggedDailyFlat = false;
 
 int hEMA50 = INVALID_HANDLE;
 int hEMA200 = INVALID_HANDLE;
@@ -84,6 +90,29 @@ double ClampVolume(const double v)
    if(vol < vmin) vol = 0.0;
    if(vol > vmax) vol = vmax;
    return vol;
+}
+
+//+------------------------------------------------------------------+
+int CurrentSpreadPoints()
+{
+   long spr = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
+   if(spr > 0)
+      return (int)spr;
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   if(ask <= 0.0 || bid <= 0.0 || _Point <= 0.0)
+      return 0;
+   return (int)MathRound((ask - bid) / _Point);
+}
+
+//+------------------------------------------------------------------+
+int MinStopDistancePoints()
+{
+   int stops = (int)SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
+   int freeze = (int)SymbolInfoInteger(_Symbol, SYMBOL_TRADE_FREEZE_LEVEL);
+   int need = MathMax(stops, freeze);
+   if(need < 1) need = 1;
+   return need;
 }
 
 //+------------------------------------------------------------------+
@@ -139,7 +168,8 @@ double GetCapital()
 //+------------------------------------------------------------------+
 double DailyLossLimitMoney()
 {
-   return GetCapital() * MathAbs(InpDailyLossPercent) / 100.0;
+   double base = (g_dayStartEquity > 0.0 ? g_dayStartEquity : GetCapital());
+   return base * MathAbs(InpDailyLossPercent) / 100.0;
 }
 
 //+------------------------------------------------------------------+
@@ -217,6 +247,8 @@ void ResetDayIfNeeded()
       g_dayStart = day0;
       g_dayStartEquity = GetCapital();
       g_tradesToday = 0;
+      g_dayStopped = false;
+      g_loggedDailyFlat = false;
       PrintFormat("TrendWIN: novo dia | capital=R$%.2f | vol≈%.0f | stopDia=R$%.2f",
                   g_dayStartEquity, CalcVolume(), DailyLossLimitMoney());
    }
@@ -322,17 +354,49 @@ bool GetSignal(int &dir)
 }
 
 //+------------------------------------------------------------------+
-double ATRPoints()
+// ATR bruto em pontos (sem clamp). SL final é limitado em OpenTrade.
+double ATRPointsRaw()
 {
    double atr = 0.0;
-   if(!Copy1(hATR, 0, atr))
+   if(!Copy1(hATR, 0, atr) || atr <= 0.0)
       return (double)InpMinSL_Points;
    double pt = _Point;
    if(pt <= 0.0) pt = 1.0;
-   double pts = atr / pt;
-   if(pts < InpMinSL_Points) pts = InpMinSL_Points;
-   if(pts > InpMaxSL_Points) pts = InpMaxSL_Points;
-   return pts;
+   return atr / pt;
+}
+
+//+------------------------------------------------------------------+
+double ClampSLPoints(const double pts)
+{
+   double out = pts;
+   if(out < InpMinSL_Points) out = InpMinSL_Points;
+   if(out > InpMaxSL_Points) out = InpMaxSL_Points;
+   return out;
+}
+
+//+------------------------------------------------------------------+
+bool NormalizeSL(const long type, const double price, double &sl)
+{
+   if(sl <= 0.0 || price <= 0.0 || _Point <= 0.0)
+      return false;
+
+   int need = MinStopDistancePoints();
+   double minDist = need * _Point;
+
+   if(type == POSITION_TYPE_BUY || type == ORDER_TYPE_BUY)
+   {
+      if(price - sl < minDist)
+         sl = price - minDist;
+   }
+   else
+   {
+      if(sl - price < minDist)
+         sl = price + minDist;
+   }
+
+   int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
+   sl = NormalizeDouble(sl, digits);
+   return true;
 }
 
 //+------------------------------------------------------------------+
@@ -345,10 +409,16 @@ bool OpenTrade(const int dir)
       return false;
    }
 
-   double atrPts = ATRPoints();
-   double slDist = atrPts * InpSL_ATR_Mult;
-   if(slDist < InpMinSL_Points) slDist = InpMinSL_Points;
-   if(slDist > InpMaxSL_Points) slDist = InpMaxSL_Points;
+   int spread = CurrentSpreadPoints();
+   if(InpMaxSpreadPoints > 0 && spread > InpMaxSpreadPoints)
+   {
+      if(InpVerboseLog)
+         PrintFormat("TrendWIN: skip spread %d > %d", spread, InpMaxSpreadPoints);
+      return false;
+   }
+
+   double atrPts = ATRPointsRaw();
+   double slDist = ClampSLPoints(atrPts * InpSL_ATR_Mult);
 
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
@@ -367,18 +437,21 @@ bool OpenTrade(const int dir)
    if(dir > 0)
    {
       sl = ask - slDist * _Point;
+      NormalizeSL(ORDER_TYPE_BUY, ask, sl);
       ok = trade.Buy(vol, _Symbol, ask, sl, 0.0, InpTradeComment);
    }
    else
    {
       sl = bid + slDist * _Point;
+      NormalizeSL(ORDER_TYPE_SELL, bid, sl);
       ok = trade.Sell(vol, _Symbol, bid, sl, 0.0, InpTradeComment);
    }
 
    if(ok)
    {
       g_tradesToday++;
-      PrintFormat("TrendWIN: %s vol=%.0f SL_pts=%.0f", (dir > 0 ? "BUY" : "SELL"), vol, slDist);
+      PrintFormat("TrendWIN: %s vol=%.0f SL_pts=%.0f spread=%d",
+                  (dir > 0 ? "BUY" : "SELL"), vol, slDist, spread);
    }
    else
       PrintFormat("TrendWIN: falha ordem retcode=%u %s", trade.ResultRetcode(), trade.ResultComment());
@@ -389,7 +462,7 @@ bool OpenTrade(const int dir)
 //+------------------------------------------------------------------+
 void ManageSoftLock()
 {
-   double atrPts = ATRPoints();
+   double atrPts = ATRPointsRaw();
    double startPts = atrPts * InpSoftStart_ATR;
    double lockPts  = atrPts * InpSoftLock_ATR;
    double trailPts = atrPts * InpTrail_ATR;
@@ -419,6 +492,7 @@ void ManageSoftLock()
             double trailSL = bid - trailPts * _Point;
             newSL = MathMax(lockSL, trailSL);
             if(sl > 0.0) newSL = MathMax(newSL, sl);
+            NormalizeSL(POSITION_TYPE_BUY, bid, newSL);
          }
       }
       else if(type == POSITION_TYPE_SELL)
@@ -430,6 +504,7 @@ void ManageSoftLock()
             double trailSL = ask + trailPts * _Point;
             newSL = MathMin(lockSL, trailSL);
             if(sl > 0.0) newSL = MathMin(newSL, sl);
+            NormalizeSL(POSITION_TYPE_SELL, ask, newSL);
          }
       }
 
@@ -442,7 +517,7 @@ void ManageSoftLock()
 }
 
 //+------------------------------------------------------------------+
-void CloseAllOurs()
+void CloseAllOurs(const string reason)
 {
    for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
@@ -451,8 +526,27 @@ void CloseAllOurs()
       if(!PositionSelectByTicket(ticket)) continue;
       if(PositionGetInteger(POSITION_MAGIC) != InpMagic) continue;
       if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
-      trade.PositionClose(ticket);
+      if(!trade.PositionClose(ticket) && InpVerboseLog)
+         PrintFormat("TrendWIN: close falhou ticket=%I64u ret=%u (%s)",
+                     ticket, trade.ResultRetcode(), reason);
    }
+}
+
+//+------------------------------------------------------------------+
+void UpdateChartComment()
+{
+   string txt = StringFormat(
+      "TrendWIN v1.11 | %s\ncapital R$%.0f | vol≈%.0f | dayPnL R$%.0f\ntrades %d/%d | spread %d | %s",
+      _Symbol,
+      GetCapital(),
+      CalcVolume(),
+      DayPnLMoney(),
+      g_tradesToday,
+      InpMaxTradesDay,
+      CurrentSpreadPoints(),
+      (g_dayStopped ? "STOP DIA" : (SessionOpen(TimeTradeServer()) ? "SESSÃO" : "FORA"))
+   );
+   Comment(txt);
 }
 
 //+------------------------------------------------------------------+
@@ -477,14 +571,19 @@ int OnInit()
    }
 
    ResetDayIfNeeded();
-   PrintFormat("TrendWIN_v1.10 init | %s | capital=R$%.2f | vol=%.0f | stopDia=%.1f%% (R$%.0f) | magic=%I64d",
+   PrintFormat("TrendWIN_v1.11 init | %s | capital=R$%.2f | vol=%.0f | stopDia=%.1f%% (R$%.0f) | magic=%I64d",
                _Symbol, GetCapital(), CalcVolume(), InpDailyLossPercent, DailyLossLimitMoney(), InpMagic);
+   PrintFormat("softLock arm=%.2fxATR lock=%.2fxATR trail=%.2fxATR | maxSpread=%d | flatOnDaily=%s",
+               InpSoftStart_ATR, InpSoftLock_ATR, InpTrail_ATR, InpMaxSpreadPoints,
+               (InpFlatOnDailyLoss ? "sim" : "nao"));
+   UpdateChartComment();
    return INIT_SUCCEEDED;
 }
 
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
 {
+   Comment("");
    if(hEMA50  != INVALID_HANDLE) IndicatorRelease(hEMA50);
    if(hEMA200 != INVALID_HANDLE) IndicatorRelease(hEMA200);
    if(hADX    != INVALID_HANDLE) IndicatorRelease(hADX);
@@ -495,29 +594,49 @@ void OnDeinit(const int reason)
 void OnTick()
 {
    ResetDayIfNeeded();
+   UpdateChartComment();
+
+   if(!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED))
+      return;
+   if(!MQLInfoInteger(MQL_TRADE_ALLOWED))
+      return;
 
    datetime now = TimeTradeServer();
 
-   // Soft lock sempre que houver posição
-   if(CountOurPositions() > 0)
+   // Soft lock sempre que houver posição (exceto se já estamos flatando)
+   if(CountOurPositions() > 0 && !ShouldFlat(now) && !g_dayStopped)
       ManageSoftLock();
 
    // Daytrade: zera no flat hour
    if(ShouldFlat(now))
    {
       if(CountOurPositions() > 0)
-         CloseAllOurs();
+         CloseAllOurs("flat_hour");
       return;
    }
 
-   if(DailyLossHit())
+   // Stop diário: opcionalmente zera e trava novas entradas
+   if(DailyLossHit() || g_dayStopped)
+   {
+      g_dayStopped = true;
+      if(InpFlatOnDailyLoss && CountOurPositions() > 0)
+      {
+         if(!g_loggedDailyFlat)
+         {
+            PrintFormat("TrendWIN: STOP DIÁRIO | dayPnL=R$%.2f | limite=R$%.2f → flat",
+                        DayPnLMoney(), DailyLossLimitMoney());
+            g_loggedDailyFlat = true;
+         }
+         CloseAllOurs("daily_loss");
+      }
       return;
+   }
 
    if(!SessionOpen(now))
       return;
 
-   // Só avalia em barra nova do TF
-   datetime barTime = iTime(_Symbol, InpTF, 0);
+   // Só avalia quando a barra M5 anterior fecha (sinal no candle 1)
+   datetime barTime = iTime(_Symbol, InpTF, 1);
    if(barTime == 0 || barTime == g_lastBarTime)
       return;
    g_lastBarTime = barTime;
