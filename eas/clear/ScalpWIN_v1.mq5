@@ -3,10 +3,10 @@
 //| Daytrade WIN (Clear/MT5) - scalp por rompimento + TP + soft lock  |
 //| Volume automático: 1 mini / R$ 1.000 | várias entradas no dia     |
 //| Gráfico: WINV26 (ou WIN$) M5                                      |
-//| v1.01: TP por ATR com margem + soft lock preserva o TP            |
+//| v1.02: capital manual/Clear + logs detalhados de skip             |
 //+------------------------------------------------------------------+
 #property copyright "Vitor / mt5-eas"
-#property version   "1.01"
+#property version   "1.02"
 #property strict
 
 #include <Trade/Trade.mqh>
@@ -19,11 +19,21 @@ enum ENUM_WIN_SIZING
    SIZING_FIXED      = 1   // Volume fixo (manual)
 };
 
+enum ENUM_CAPITAL_MODE
+{
+   CAPITAL_AUTO   = 0,  // Usa saldo Clear se confiável; senão fallback
+   CAPITAL_MANUAL = 1,  // Usa InpManualCapital (recomendado na Clear)
+   CAPITAL_BROKER = 2   // Força equity/balance/free do MT5
+};
+
 //------------------------ Inputs ------------------------------------
-input group "=== Volume automático ==="
+input group "=== Volume / capital ==="
 input ENUM_WIN_SIZING InpSizingMode      = SIZING_BY_CAPITAL;
+input ENUM_CAPITAL_MODE InpCapitalMode   = CAPITAL_MANUAL; // Clear: use Manual
+input double InpManualCapital    = 1000.0;   // Capital real alocado no daytrade (Clear)
 input double InpCapitalPerContract = 1000.0; // 1 mini a cada R$ 1.000
-input double InpFallbackCapital  = 1000.0;   // Se MT5 mostrar saldo 0 (Clear)
+input double InpFallbackCapital  = 1000.0;   // Se Auto e MT5 não reportar saldo
+input double InpBrokerMinReliable = 50.0;    // Abaixo disso Auto ignora saldo MT5
 input double InpFixedVolume      = 1.0;      // Só se Sizing = Fixed
 input double InpMaxVolume        = 5.0;      // Teto de segurança
 input double InpMinCapitalTrade  = 800.0;    // Abaixo disso não opera
@@ -71,7 +81,7 @@ input group "=== Geral ==="
 input long   InpMagic           = 260916;
 input int    InpSlippagePoints  = 30;
 input string InpTradeComment    = "ScalpWIN_v1";
-input bool   InpVerboseLog      = true;
+input bool   InpVerboseLog      = true;    // Loga motivo de cada barra sem entrada
 
 //------------------------ Estado ------------------------------------
 datetime g_dayStart = 0;
@@ -80,6 +90,8 @@ int      g_tradesToday = 0;
 datetime g_lastBarTime = 0;
 bool     g_dayStopped = false;
 bool     g_loggedDailyFlat = false;
+string   g_capitalSource = "n/a";
+string   g_lastSkipReason = "";
 
 int hEMA50 = INVALID_HANDLE;
 int hEMA200 = INVALID_HANDLE;
@@ -149,14 +161,48 @@ double RealizedPnLAllTime()
 }
 
 //+------------------------------------------------------------------+
-double GetCapital()
+void LogAccountSnapshot()
+{
+   PrintFormat("ScalpWIN: conta MT5 | balance=R$%.2f equity=R$%.2f free=R$%.2f margin=R$%.2f credit=R$%.2f",
+               AccountInfoDouble(ACCOUNT_BALANCE),
+               AccountInfoDouble(ACCOUNT_EQUITY),
+               AccountInfoDouble(ACCOUNT_MARGIN_FREE),
+               AccountInfoDouble(ACCOUNT_MARGIN),
+               AccountInfoDouble(ACCOUNT_CREDIT));
+}
+
+//+------------------------------------------------------------------+
+double BrokerReportedCapital()
 {
    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
    double free = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
-   double detected = MathMax(equity, MathMax(balance, free));
-   if(detected > 1.0)
-      return detected;
+   return MathMax(equity, MathMax(balance, free));
+}
+
+//+------------------------------------------------------------------+
+// Capital operacional: na Clear o MT5 costuma zerar saldo — use Manual.
+double GetCapital()
+{
+   if(InpCapitalMode == CAPITAL_MANUAL && InpManualCapital > 0.0)
+   {
+      g_capitalSource = "manual";
+      return InpManualCapital;
+   }
+
+   double broker = BrokerReportedCapital();
+   if(InpCapitalMode == CAPITAL_BROKER)
+   {
+      g_capitalSource = "broker";
+      return MathMax(0.0, broker);
+   }
+
+   // AUTO
+   if(broker >= InpBrokerMinReliable)
+   {
+      g_capitalSource = "broker";
+      return broker;
+   }
 
    double cap = InpFallbackCapital + RealizedPnLAllTime();
    for(int i = PositionsTotal() - 1; i >= 0; i--)
@@ -168,7 +214,39 @@ double GetCapital()
       if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
       cap += PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
    }
+   g_capitalSource = "fallback";
    return MathMax(0.0, cap);
+}
+
+//+------------------------------------------------------------------+
+int CountEntriesToday()
+{
+   if(g_dayStart <= 0)
+      return 0;
+   if(!HistorySelect(g_dayStart, TimeTradeServer() + 1))
+      return 0;
+
+   int n = 0;
+   int total = HistoryDealsTotal();
+   for(int i = 0; i < total; i++)
+   {
+      ulong ticket = HistoryDealGetTicket(i);
+      if(ticket == 0) continue;
+      if((long)HistoryDealGetInteger(ticket, DEAL_MAGIC) != InpMagic) continue;
+      if(HistoryDealGetString(ticket, DEAL_SYMBOL) != _Symbol) continue;
+      if(HistoryDealGetInteger(ticket, DEAL_ENTRY) != DEAL_ENTRY_IN)
+         continue;
+      n++;
+   }
+   return n;
+}
+
+//+------------------------------------------------------------------+
+void LogSkip(const string reason)
+{
+   g_lastSkipReason = reason;
+   if(InpVerboseLog)
+      PrintFormat("ScalpWIN: SKIP | %s", reason);
 }
 
 //+------------------------------------------------------------------+
@@ -250,11 +328,12 @@ void ResetDayIfNeeded()
    {
       g_dayStart = day0;
       g_dayStartEquity = GetCapital();
-      g_tradesToday = 0;
+      g_tradesToday = CountEntriesToday();
       g_dayStopped = false;
       g_loggedDailyFlat = false;
-      PrintFormat("ScalpWIN: novo dia | capital=R$%.2f | vol≈%.0f | stopDia=R$%.2f",
-                  g_dayStartEquity, CalcVolume(), DailyLossLimitMoney());
+      g_lastSkipReason = "";
+      PrintFormat("ScalpWIN: novo dia | capital=R$%.2f (%s) | vol≈%.0f | stopDia=R$%.2f | entradasHoje=%d",
+                  g_dayStartEquity, g_capitalSource, CalcVolume(), DailyLossLimitMoney(), g_tradesToday);
    }
 }
 
@@ -414,30 +493,32 @@ bool GetSignal(int &dir)
    dir = 0;
 
    double ema50, ema200, adx, atr;
-   if(!Copy1(hEMA50, 0, ema50)) return false;
-   if(!Copy1(hEMA200, 0, ema200)) return false;
-   if(!Copy1(hADX, 0, adx)) return false;
-   if(!Copy1(hATR, 0, atr) || atr <= 0.0) return false;
+   if(!Copy1(hEMA50, 0, ema50)) { LogSkip("indicador EMA50 sem dados"); return false; }
+   if(!Copy1(hEMA200, 0, ema200)) { LogSkip("indicador EMA200 sem dados"); return false; }
+   if(!Copy1(hADX, 0, adx)) { LogSkip("indicador ADX sem dados"); return false; }
+   if(!Copy1(hATR, 0, atr) || atr <= 0.0) { LogSkip("indicador ATR sem dados"); return false; }
 
    if(InpUseADXFilter && adx < InpADXMin)
    {
-      if(InpVerboseLog)
-         PrintFormat("ScalpWIN: skip ADX fraco %.1f < %.1f", adx, InpADXMin);
+      LogSkip(StringFormat("ADX fraco %.1f < %.1f", adx, InpADXMin));
       return true;
    }
 
    double open1  = iOpen(_Symbol, InpTF, 1);
    double close1 = iClose(_Symbol, InpTF, 1);
    if(open1 <= 0.0 || close1 <= 0.0)
+   {
+      LogSkip("candle 1 sem OHLC");
       return false;
+   }
 
    double body = MathAbs(close1 - open1);
    double minBody = atr * InpMinBodyATR;
+   double bodyPts = (_Point > 0.0 ? body / _Point : 0.0);
+   double minBodyPts = (_Point > 0.0 ? minBody / _Point : 0.0);
    if(body < minBody)
    {
-      if(InpVerboseLog)
-         PrintFormat("ScalpWIN: skip corpo fraco body=%.0f min=%.0f pts",
-                     body / _Point, minBody / _Point);
+      LogSkip(StringFormat("corpo fraco %.0f < %.0f pts (ATR)", bodyPts, minBodyPts));
       return true;
    }
 
@@ -459,11 +540,15 @@ bool GetSignal(int &dir)
    {
       if(InpUseEmaTrend && !upTrend)
       {
-         if(InpVerboseLog)
-            Print("ScalpWIN: skip BUY (EMA contra)");
+         LogSkip(StringFormat("rompimento alta mas EMA contra (EMA%d=%.0f <= EMA%d=%.0f)",
+                              InpEMAFast, ema50, InpEMASlow, ema200));
          return true;
       }
       dir = 1;
+      g_lastSkipReason = "";
+      if(InpVerboseLog)
+         PrintFormat("ScalpWIN: SINAL BUY | close=%.0f > hh=%.0f | ADX=%.1f | body=%.0fpts",
+                     close1, hh, adx, bodyPts);
       return true;
    }
 
@@ -471,17 +556,21 @@ bool GetSignal(int &dir)
    {
       if(InpUseEmaTrend && !downTrend)
       {
-         if(InpVerboseLog)
-            Print("ScalpWIN: skip SELL (EMA contra)");
+         LogSkip(StringFormat("rompimento baixa mas EMA contra (EMA%d=%.0f >= EMA%d=%.0f)",
+                              InpEMAFast, ema50, InpEMASlow, ema200));
          return true;
       }
       dir = -1;
+      g_lastSkipReason = "";
+      if(InpVerboseLog)
+         PrintFormat("ScalpWIN: SINAL SELL | close=%.0f < ll=%.0f | ADX=%.1f | body=%.0fpts",
+                     close1, ll, adx, bodyPts);
       return true;
    }
 
-   if(InpVerboseLog)
-      PrintFormat("ScalpWIN: sem rompimento close=%.0f hh=%.0f ll=%.0f ADX=%.1f",
-                  close1, hh, ll, adx);
+   LogSkip(StringFormat("sem rompimento | close=%.0f hh=%.0f ll=%.0f | ADX=%.1f body=%.0fpts | EMA%s",
+                        close1, hh, ll, adx, bodyPts,
+                        (upTrend ? "alta" : (downTrend ? "baixa" : "flat"))));
    return true;
 }
 
@@ -491,15 +580,15 @@ bool OpenTrade(const int dir)
    double vol = CalcVolume();
    if(vol <= 0.0)
    {
-      PrintFormat("ScalpWIN: sem volume (capital=R$%.2f)", GetCapital());
+      LogSkip(StringFormat("sem volume (capital=R$%.2f fonte=%s min=R$%.0f)",
+                           GetCapital(), g_capitalSource, InpMinCapitalTrade));
       return false;
    }
 
    int spread = CurrentSpreadPoints();
    if(InpMaxSpreadPoints > 0 && spread > InpMaxSpreadPoints)
    {
-      if(InpVerboseLog)
-         PrintFormat("ScalpWIN: skip spread %d > %d", spread, InpMaxSpreadPoints);
+      LogSkip(StringFormat("spread %d > max %d", spread, InpMaxSpreadPoints));
       return false;
    }
 
@@ -639,17 +728,22 @@ void CloseAllOurs(const string reason)
 //+------------------------------------------------------------------+
 void UpdateChartComment()
 {
+   string status = g_dayStopped ? "STOP DIA (sem novas entradas)"
+                  : (SessionOpen(TimeTradeServer()) ? "SESSÃO" : "FORA");
+   string skip = (g_lastSkipReason != "" ? "\nultimo skip: " + g_lastSkipReason : "");
    string txt = StringFormat(
-      "ScalpWIN v1.01 | %s\ncapital R$%.0f | vol≈%.0f | dayPnL R$%.0f\ntrades %d/%d | spread %d | TP %s | %s",
+      "ScalpWIN v1.02 | %s\ncapital R$%.0f (%s) | vol≈%.0f | dayPnL R$%.0f\ntrades %d/%d | spread %d | TP %s | %s%s",
       _Symbol,
       GetCapital(),
+      g_capitalSource,
       CalcVolume(),
       DayPnLMoney(),
       g_tradesToday,
       InpMaxTradesDay,
       CurrentSpreadPoints(),
       (InpUseTP ? StringFormat("%.2fxATR", InpTP_ATR_Mult) : "off"),
-      (g_dayStopped ? "STOP DIA" : (SessionOpen(TimeTradeServer()) ? "SESSÃO" : "FORA"))
+      status,
+      skip
    );
    Comment(txt);
 }
@@ -675,14 +769,28 @@ int OnInit()
       return INIT_FAILED;
    }
 
+   LogAccountSnapshot();
    ResetDayIfNeeded();
-   PrintFormat("ScalpWIN_v1.01 init | %s | capital=R$%.2f | vol=%.0f | stopDia=%.1f%% (R$%.0f) | magic=%I64d",
-               _Symbol, GetCapital(), CalcVolume(), InpDailyLossPercent, DailyLossLimitMoney(), InpMagic);
+   // Se o EA foi recolocado no mesmo dia, reconstrói contagem e estado do stop
+   g_tradesToday = CountEntriesToday();
+   if(DailyLossHit())
+   {
+      g_dayStopped = true;
+      PrintFormat("ScalpWIN: STOP DIA já ativo no init | dayPnL=R$%.2f | limite=R$%.2f (sem novas entradas hoje)",
+                  DayPnLMoney(), DailyLossLimitMoney());
+   }
+
+   PrintFormat("ScalpWIN_v1.02 init | %s | capital=R$%.2f (%s) | vol=%.0f | stopDia=%.1f%% (R$%.0f) | magic=%I64d",
+               _Symbol, GetCapital(), g_capitalSource, CalcVolume(),
+               InpDailyLossPercent, DailyLossLimitMoney(), InpMagic);
+   PrintFormat("modoCapital=%d manual=R$%.0f | brokerRaw=R$%.2f | entradasHoje=%d",
+               InpCapitalMode, InpManualCapital, BrokerReportedCapital(), g_tradesToday);
    PrintFormat("rompimento %d barras | body>=%.2fxATR | ADX>=%.1f | SL=%.2fxATR | TP=%s",
                InpBreakBars, InpMinBodyATR, InpADXMin, InpSL_ATR_Mult,
                (InpUseTP ? StringFormat("%.2fxATR (%d-%d pts)", InpTP_ATR_Mult, InpMinTP_Points, InpMaxTP_Points) : "off"));
-   PrintFormat("softLock arm=%.2fxATR lock=%.2fxATR trail=%.2fxATR | maxSpread=%d | maxTrades=%d",
-               InpSoftStart_ATR, InpSoftLock_ATR, InpTrail_ATR, InpMaxSpreadPoints, InpMaxTradesDay);
+   PrintFormat("softLock arm=%.2fxATR lock=%.2fxATR trail=%.2fxATR | maxSpread=%d | maxTrades=%d | verbose=%s",
+               InpSoftStart_ATR, InpSoftLock_ATR, InpTrail_ATR, InpMaxSpreadPoints, InpMaxTradesDay,
+               (InpVerboseLog ? "sim" : "nao"));
    UpdateChartComment();
    return INIT_SUCCEEDED;
 }
@@ -723,16 +831,14 @@ void OnTick()
    if(DailyLossHit() || g_dayStopped)
    {
       g_dayStopped = true;
-      if(InpFlatOnDailyLoss && CountOurPositions() > 0)
+      if(!g_loggedDailyFlat)
       {
-         if(!g_loggedDailyFlat)
-         {
-            PrintFormat("ScalpWIN: STOP DIÁRIO | dayPnL=R$%.2f | limite=R$%.2f → flat",
-                        DayPnLMoney(), DailyLossLimitMoney());
-            g_loggedDailyFlat = true;
-         }
-         CloseAllOurs("daily_loss");
+         PrintFormat("ScalpWIN: STOP DIÁRIO ATIVO | dayPnL=R$%.2f | limite=R$%.2f | capitalBase=R$%.2f (%s) → sem novas entradas hoje",
+                     DayPnLMoney(), DailyLossLimitMoney(), g_dayStartEquity, g_capitalSource);
+         g_loggedDailyFlat = true;
       }
+      if(InpFlatOnDailyLoss && CountOurPositions() > 0)
+         CloseAllOurs("daily_loss");
       return;
    }
 
@@ -744,10 +850,19 @@ void OnTick()
       return;
    g_lastBarTime = barTime;
 
+   // Recalibra contagem a cada barra (sobrevive a reload do EA)
+   g_tradesToday = CountEntriesToday();
+
    if(CountOurPositions() >= InpMaxPositions)
+   {
+      LogSkip(StringFormat("já tem posição aberta (%d/%d)", CountOurPositions(), InpMaxPositions));
       return;
+   }
    if(g_tradesToday >= InpMaxTradesDay)
+   {
+      LogSkip(StringFormat("máx. trades do dia %d/%d", g_tradesToday, InpMaxTradesDay));
       return;
+   }
 
    int dir = 0;
    if(!GetSignal(dir) || dir == 0)
