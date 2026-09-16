@@ -20,7 +20,7 @@ Automação em **MetaTrader 5** para duas corretoras:
 
 **ScalpWIN_v1** (preferido)
 - Rompimento das últimas 3 barras + corpo mínimo + EMA50/200 + ADX ≥ 20
-- Soft lock cedo (0.50×ATR) para travar pouco lucro várias vezes; **sem TP fixo**
+- **TP por ATR (2,0×)** com margem (200–600 pts) + soft lock que preserva o TP
 - Até **15** entradas/dia, 1 posição, stop diário **4%**
 - Sessão 10:15–16:45, flat ~17:00 | volume: 1 mini / R$ 1.000
 - Spread máx. 40 pts | magic distinto do TrendWIN
