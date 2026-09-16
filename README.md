@@ -15,14 +15,16 @@ Automação em **MetaTrader 5** para duas corretoras:
 
 | Ativo | Timeframe | EA | Magic | Versão | Papel |
 |-------|-----------|----|-------|--------|-------|
-| WINV26 / WIN$ | M5 | **ScalpWIN_v1** | 260916 | 1.01 | Daytrade scalp (recomendado) |
+| WINV26 / WIN$ | M5 | **ScalpWIN_v1** | 260916 | 1.02 | Daytrade scalp (recomendado) |
 | WINV26 / WIN$ | M5 | TrendWIN_v1 | 260914 | 1.11 | Daytrade tendência (referência) |
 
 **ScalpWIN_v1** (preferido)
 - Rompimento das últimas 3 barras + corpo mínimo + EMA50/200 + ADX ≥ 20
 - **TP por ATR (2,0×)** com margem (200–600 pts) + soft lock que preserva o TP
 - Até **15** entradas/dia, 1 posição, stop diário **4%**
+- **Capital:** modo Manual (padrão) — informe o valor real alocado na Clear (`InpManualCapital`); o MT5 da Clear costuma reportar saldo 0
 - Sessão 10:15–16:45, flat ~17:00 | volume: 1 mini / R$ 1.000
+- Logs detalhados de skip na aba Experts (`SKIP | motivo`)
 - Spread máx. 40 pts | magic distinto do TrendWIN
 
 Instalação: copie `eas/clear/ScalpWIN_v1.mq5` → `MQL5/Experts/`, compile (F7), arraste no gráfico **WINV26 M5** (contrato líquido). Remova o TrendWIN do gráfico antes.
