@@ -15,21 +15,23 @@ Automação em **MetaTrader 5** para duas corretoras:
 
 | Ativo | Timeframe | EA | Magic | Versão | Papel |
 |-------|-----------|----|-------|--------|-------|
-| WINV26 / WIN$ | M5 | **ScalpWIN_v1** | 260916 | 1.02 | Daytrade scalp (recomendado) |
-| WINV26 / WIN$ | M5 | TrendWIN_v1 | 260914 | 1.11 | Daytrade tendência (referência) |
+| WINV26 / WIN$ | M5 | **ScalpWIN_v2** | 260917 | 2.00 | Daytrade escada % (recomendado) |
+| WINV26 / WIN$ | M5 | ScalpWIN_v1 | 260916 | 1.02 | Scalp TP/ATR (referência) |
+| WINV26 / WIN$ | M5 | TrendWIN_v1 | 260914 | 1.11 | Tendência (referência) |
 
-**ScalpWIN_v1** (preferido)
-- Rompimento das últimas 3 barras + corpo mínimo + EMA50/200 + ADX ≥ 20
-- **TP por ATR (2,0×)** com margem (200–600 pts) + soft lock que preserva o TP
-- Até **15** entradas/dia, 1 posição, stop diário **4%**
-- **Capital:** modo Manual (padrão) — informe o valor real alocado na Clear (`InpManualCapital`); o MT5 da Clear costuma reportar saldo 0
-- Sessão 10:15–16:45, flat ~17:00 | volume: 1 mini / R$ 1.000
-- Logs detalhados de skip na aba Experts (`SKIP | motivo`)
-- Spread máx. 40 pts | magic distinto do TrendWIN
+**ScalpWIN_v2** (preferido)
+- Rompimento M5 + EMA/ADX (mesma entrada seletiva)
+- **Volume por capital** (1 mini / R$ 1.000) — sobe com o saldo
+- **Escada de lucro** sobre o capital do dia: **+2% → fecha 50%** · **+5% → fecha +25%** · resto com soft lock (mais apertado após parciais)
+- Com **1 contrato**: no 1º alvo fecha tudo (não dá pra fracionar)
+- **SL folgado** por ATR, teto **5%** do capital (não aperta demais no ruído)
+- **Sem teto de trades/dia** — só para no **stop diário 10%** do capital do dia
+- Capital Manual (Clear) + logs `SKIP | motivo`
+- Sessão 10:15–16:45, flat ~17:00
 
-Instalação: copie `eas/clear/ScalpWIN_v1.mq5` → `MQL5/Experts/`, compile (F7), arraste no gráfico **WINV26 M5** (contrato líquido). Remova o TrendWIN do gráfico antes.
+Instalação: copie `eas/clear/ScalpWIN_v2.mq5` → `MQL5/Experts/`, compile (F7), arraste no **WINV26 M5**. Remova ScalpWIN_v1 / TrendWIN do gráfico. Ajuste `InpManualCapital`.
 
-**TrendWIN_v1** (referência): tendência EMA/ADX mais seletiva, poucas entradas (máx. 4/dia).
+**ScalpWIN_v1** / **TrendWIN_v1**: referências anteriores.
 
 ---
 
@@ -71,7 +73,8 @@ Tendência + ADX + SL por ATR, **sem TP fixo**. Soft lock arma depois de X ATR d
 ```
 eas/
   clear/
-    ScalpWIN_v1.mq5       # Clear / WIN scalp (recomendado)
+    ScalpWIN_v2.mq5       # Clear / WIN escada % (recomendado)
+    ScalpWIN_v1.mq5       # Clear / WIN scalp TP (referência)
     TrendWIN_v1.mq5       # Clear / WIN tendência (referência)
   nomo/
     TrendEURUSD_v1.mq5
