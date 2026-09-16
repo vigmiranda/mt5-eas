@@ -1,11 +1,12 @@
 //+------------------------------------------------------------------+
 //| ScalpWIN_v1.mq5                                                   |
-//| Daytrade WIN (Clear/MT5) - scalp por rompimento + soft lock       |
+//| Daytrade WIN (Clear/MT5) - scalp por rompimento + TP + soft lock  |
 //| Volume automático: 1 mini / R$ 1.000 | várias entradas no dia     |
 //| Gráfico: WINV26 (ou WIN$) M5                                      |
+//| v1.01: TP por ATR com margem + soft lock preserva o TP            |
 //+------------------------------------------------------------------+
 #property copyright "Vitor / mt5-eas"
-#property version   "1.00"
+#property version   "1.01"
 #property strict
 
 #include <Trade/Trade.mqh>
@@ -53,12 +54,16 @@ input bool   InpUseADXFilter    = true;
 input double InpMinBodyATR      = 0.35;    // Corpo mínimo do candle = fator * ATR
 input ENUM_TIMEFRAMES InpTF     = PERIOD_M5;
 
-input group "=== Stop / Soft lock (pontos do WIN) ==="
+input group "=== Stop / TP / Soft lock (pontos do WIN) ==="
 input double InpSL_ATR_Mult     = 1.20;    // SL inicial = ATR * mult
 input int    InpATRPeriod       = 14;
-input double InpSoftStart_ATR   = 0.50;    // Arma soft lock cedo (pega pouquinho)
-input double InpSoftLock_ATR    = 0.20;    // Trava pelo menos Y ATR de lucro
-input double InpTrail_ATR       = 0.35;    // Trail subsequente (mais apertado)
+input bool   InpUseTP           = true;    // Take profit fixo (além do soft lock)
+input double InpTP_ATR_Mult     = 2.00;    // TP = ATR * mult (margem boa no WIN)
+input int    InpMinTP_Points    = 200;     // TP mínimo em pontos
+input int    InpMaxTP_Points    = 600;     // TP máximo em pontos
+input double InpSoftStart_ATR   = 0.70;    // Arma soft lock após X ATR (deixa o TP trabalhar)
+input double InpSoftLock_ATR    = 0.25;    // Trava pelo menos Y ATR de lucro
+input double InpTrail_ATR       = 0.45;    // Trail subsequente
 input int    InpMinSL_Points    = 100;     // SL mínimo em pontos
 input int    InpMaxSL_Points    = 350;     // SL máximo em pontos
 
@@ -344,6 +349,15 @@ double ClampSLPoints(const double pts)
 }
 
 //+------------------------------------------------------------------+
+double ClampTPPoints(const double pts)
+{
+   double out = pts;
+   if(out < InpMinTP_Points) out = InpMinTP_Points;
+   if(out > InpMaxTP_Points) out = InpMaxTP_Points;
+   return out;
+}
+
+//+------------------------------------------------------------------+
 bool NormalizeSL(const long type, const double price, double &sl)
 {
    if(sl <= 0.0 || price <= 0.0 || _Point <= 0.0)
@@ -365,6 +379,31 @@ bool NormalizeSL(const long type, const double price, double &sl)
 
    int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
    sl = NormalizeDouble(sl, digits);
+   return true;
+}
+
+//+------------------------------------------------------------------+
+bool NormalizeTP(const long type, const double price, double &tp)
+{
+   if(tp <= 0.0 || price <= 0.0 || _Point <= 0.0)
+      return false;
+
+   int need = MinStopDistancePoints();
+   double minDist = need * _Point;
+
+   if(type == POSITION_TYPE_BUY || type == ORDER_TYPE_BUY)
+   {
+      if(tp - price < minDist)
+         tp = price + minDist;
+   }
+   else
+   {
+      if(price - tp < minDist)
+         tp = price - minDist;
+   }
+
+   int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
+   tp = NormalizeDouble(tp, digits);
    return true;
 }
 
@@ -466,6 +505,9 @@ bool OpenTrade(const int dir)
 
    double atrPts = ATRPointsRaw();
    double slDist = ClampSLPoints(atrPts * InpSL_ATR_Mult);
+   double tpDist = 0.0;
+   if(InpUseTP)
+      tpDist = ClampTPPoints(atrPts * InpTP_ATR_Mult);
 
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
@@ -476,6 +518,7 @@ bool OpenTrade(const int dir)
    }
 
    double sl = 0.0;
+   double tp = 0.0;
    trade.SetExpertMagicNumber(InpMagic);
    trade.SetDeviationInPoints(InpSlippagePoints);
    trade.SetTypeFillingBySymbol(_Symbol);
@@ -485,20 +528,30 @@ bool OpenTrade(const int dir)
    {
       sl = ask - slDist * _Point;
       NormalizeSL(ORDER_TYPE_BUY, ask, sl);
-      ok = trade.Buy(vol, _Symbol, ask, sl, 0.0, InpTradeComment);
+      if(InpUseTP && tpDist > 0.0)
+      {
+         tp = ask + tpDist * _Point;
+         NormalizeTP(ORDER_TYPE_BUY, ask, tp);
+      }
+      ok = trade.Buy(vol, _Symbol, ask, sl, tp, InpTradeComment);
    }
    else
    {
       sl = bid + slDist * _Point;
       NormalizeSL(ORDER_TYPE_SELL, bid, sl);
-      ok = trade.Sell(vol, _Symbol, bid, sl, 0.0, InpTradeComment);
+      if(InpUseTP && tpDist > 0.0)
+      {
+         tp = bid - tpDist * _Point;
+         NormalizeTP(ORDER_TYPE_SELL, bid, tp);
+      }
+      ok = trade.Sell(vol, _Symbol, bid, sl, tp, InpTradeComment);
    }
 
    if(ok)
    {
       g_tradesToday++;
-      PrintFormat("ScalpWIN: %s vol=%.0f SL_pts=%.0f spread=%d trades=%d/%d",
-                  (dir > 0 ? "BUY" : "SELL"), vol, slDist, spread,
+      PrintFormat("ScalpWIN: %s vol=%.0f SL_pts=%.0f TP_pts=%.0f spread=%d trades=%d/%d",
+                  (dir > 0 ? "BUY" : "SELL"), vol, slDist, tpDist, spread,
                   g_tradesToday, InpMaxTradesDay);
    }
    else
@@ -526,6 +579,7 @@ void ManageSoftLock()
       long type = PositionGetInteger(POSITION_TYPE);
       double open = PositionGetDouble(POSITION_PRICE_OPEN);
       double sl = PositionGetDouble(POSITION_SL);
+      double tp = PositionGetDouble(POSITION_TP); // preserva TP ao trailar
       double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
       double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
 
@@ -558,10 +612,10 @@ void ManageSoftLock()
 
       if(newSL > 0.0 && MathAbs(newSL - sl) >= _Point)
       {
-         if(!trade.PositionModify(ticket, newSL, 0.0))
+         if(!trade.PositionModify(ticket, newSL, tp))
             PrintFormat("ScalpWIN: softlock falhou %u", trade.ResultRetcode());
          else if(InpVerboseLog)
-            PrintFormat("ScalpWIN: SOFT+ SL %.0f -> %.0f", sl, newSL);
+            PrintFormat("ScalpWIN: SOFT+ SL %.0f -> %.0f (TP=%.0f)", sl, newSL, tp);
       }
    }
 }
@@ -586,7 +640,7 @@ void CloseAllOurs(const string reason)
 void UpdateChartComment()
 {
    string txt = StringFormat(
-      "ScalpWIN v1.00 | %s\ncapital R$%.0f | vol≈%.0f | dayPnL R$%.0f\ntrades %d/%d | spread %d | %s",
+      "ScalpWIN v1.01 | %s\ncapital R$%.0f | vol≈%.0f | dayPnL R$%.0f\ntrades %d/%d | spread %d | TP %s | %s",
       _Symbol,
       GetCapital(),
       CalcVolume(),
@@ -594,6 +648,7 @@ void UpdateChartComment()
       g_tradesToday,
       InpMaxTradesDay,
       CurrentSpreadPoints(),
+      (InpUseTP ? StringFormat("%.2fxATR", InpTP_ATR_Mult) : "off"),
       (g_dayStopped ? "STOP DIA" : (SessionOpen(TimeTradeServer()) ? "SESSÃO" : "FORA"))
    );
    Comment(txt);
@@ -621,10 +676,11 @@ int OnInit()
    }
 
    ResetDayIfNeeded();
-   PrintFormat("ScalpWIN_v1.00 init | %s | capital=R$%.2f | vol=%.0f | stopDia=%.1f%% (R$%.0f) | magic=%I64d",
+   PrintFormat("ScalpWIN_v1.01 init | %s | capital=R$%.2f | vol=%.0f | stopDia=%.1f%% (R$%.0f) | magic=%I64d",
                _Symbol, GetCapital(), CalcVolume(), InpDailyLossPercent, DailyLossLimitMoney(), InpMagic);
-   PrintFormat("rompimento %d barras | body>=%.2fxATR | ADX>=%.1f | SL=%.2fxATR",
-               InpBreakBars, InpMinBodyATR, InpADXMin, InpSL_ATR_Mult);
+   PrintFormat("rompimento %d barras | body>=%.2fxATR | ADX>=%.1f | SL=%.2fxATR | TP=%s",
+               InpBreakBars, InpMinBodyATR, InpADXMin, InpSL_ATR_Mult,
+               (InpUseTP ? StringFormat("%.2fxATR (%d-%d pts)", InpTP_ATR_Mult, InpMinTP_Points, InpMaxTP_Points) : "off"));
    PrintFormat("softLock arm=%.2fxATR lock=%.2fxATR trail=%.2fxATR | maxSpread=%d | maxTrades=%d",
                InpSoftStart_ATR, InpSoftLock_ATR, InpTrail_ATR, InpMaxSpreadPoints, InpMaxTradesDay);
    UpdateChartComment();
