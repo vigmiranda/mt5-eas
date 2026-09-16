@@ -15,17 +15,19 @@ Automação em **MetaTrader 5** para duas corretoras:
 
 | Ativo | Timeframe | EA | Magic | Versão | Papel |
 |-------|-----------|----|-------|--------|-------|
-| WIN$ | M5 | TrendWIN_v1 | 260914 | 1.11 | Daytrade tendência |
+| WINV26 / WIN$ | M5 | **ScalpWIN_v1** | 260916 | 1.00 | Daytrade scalp (recomendado) |
+| WINV26 / WIN$ | M5 | TrendWIN_v1 | 260914 | 1.11 | Daytrade tendência (referência) |
 
-**TrendWIN_v1**
-- EMA 50/200 + ADX ≥ 25 + SL por ATR, **sem TP** (soft lock / trail)
-- Sessão 10:15–16:45, flat ~17:00 (horário do servidor)
-- **Volume automático:** 1 minicontrato a cada **R$ 1.000** de capital
-- Stop diário: **5%** do capital (zera posição e trava o dia)
-- Filtro de spread + validação de stops level (Clear)
-- Se o MT5 da Clear mostrar saldo 0, usa `FallbackCapital` + PnL do próprio EA
+**ScalpWIN_v1** (preferido)
+- Rompimento das últimas 3 barras + corpo mínimo + EMA50/200 + ADX ≥ 20
+- Soft lock cedo (0.50×ATR) para travar pouco lucro várias vezes; **sem TP fixo**
+- Até **15** entradas/dia, 1 posição, stop diário **4%**
+- Sessão 10:15–16:45, flat ~17:00 | volume: 1 mini / R$ 1.000
+- Spread máx. 40 pts | magic distinto do TrendWIN
 
-Instalação: copie `eas/clear/TrendWIN_v1.mq5` → `MQL5/Experts/`, compile (F7), arraste no gráfico **WIN$ M5**.
+Instalação: copie `eas/clear/ScalpWIN_v1.mq5` → `MQL5/Experts/`, compile (F7), arraste no gráfico **WINV26 M5** (contrato líquido). Remova o TrendWIN do gráfico antes.
+
+**TrendWIN_v1** (referência): tendência EMA/ADX mais seletiva, poucas entradas (máx. 4/dia).
 
 ---
 
@@ -67,7 +69,8 @@ Tendência + ADX + SL por ATR, **sem TP fixo**. Soft lock arma depois de X ATR d
 ```
 eas/
   clear/
-    TrendWIN_v1.mq5       # Clear / WIN$ daytrade
+    ScalpWIN_v1.mq5       # Clear / WIN scalp (recomendado)
+    TrendWIN_v1.mq5       # Clear / WIN tendência (referência)
   nomo/
     TrendEURUSD_v1.mq5
     ScalpUSDJPY_v2.mq5
