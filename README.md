@@ -15,7 +15,7 @@ Automação em **MetaTrader 5** para duas corretoras:
 
 | Ativo | Timeframe | EA | Magic | Versão | Papel |
 |-------|-----------|----|-------|--------|-------|
-| WINV26 / WIN$ | M5 | **ScalpWIN_v1** | 260916 | 1.00 | Daytrade scalp (recomendado) |
+| WINV26 / WIN$ | M5 | **ScalpWIN_v1** | 260916 | 1.01 | Daytrade scalp (recomendado) |
 | WINV26 / WIN$ | M5 | TrendWIN_v1 | 260914 | 1.11 | Daytrade tendência (referência) |
 
 **ScalpWIN_v1** (preferido)
