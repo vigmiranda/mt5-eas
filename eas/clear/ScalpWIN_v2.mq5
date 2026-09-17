@@ -107,6 +107,7 @@ double   g_posOpenVol = 0.0;
 double   g_posOpenPrice = 0.0;
 int      g_ladderStep = 0;       // 0=nada, 1=fez 1º, 2=fez 2º, 3=fez 3º
 double   g_realizedThisTrade = 0.0;
+datetime g_lastCloseFailLog = 0;
 
 int hEMA50 = INVALID_HANDLE;
 int hEMA200 = INVALID_HANDLE;
@@ -638,8 +639,6 @@ double RoundDownVolume(const double v)
    if(out < vmin) out = 0.0;
    return out;
 }
-
-datetime g_lastCloseFailLog = 0;
 
 //+------------------------------------------------------------------+
 bool CloseVolume(const ulong ticket, const double volClose, const string reason)
