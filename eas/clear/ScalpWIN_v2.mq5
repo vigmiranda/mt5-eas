@@ -3,10 +3,10 @@
 //| Daytrade WIN (Clear) - rompimento + escada de lucro % + soft lock |
 //| Volume por capital | SL até 5% do capital | stop dia 10%          |
 //| Sem teto de trades/dia | parciais: 2%→50% · 5%→+25% · resto trail |
-//| v2.03: capital virtual (seed+PnL) + faixas de contratos + histórico |
+//| v2.04: semente R$850 + taxas B3 estimadas no capital virtual      |
 //+------------------------------------------------------------------+
 #property copyright "Vitor / mt5-eas"
-#property version   "2.03"
+#property version   "2.04"
 #property strict
 
 #include <Trade/Trade.mqh>
@@ -31,16 +31,18 @@ enum ENUM_CAPITAL_MODE
 input group "=== Volume / capital virtual ==="
 input ENUM_WIN_SIZING   InpSizingMode        = SIZING_BY_CAPITAL;
 input ENUM_CAPITAL_MODE InpCapitalMode       = CAPITAL_VIRTUAL; // Clear: Virtual
-input double InpSeedCapital        = 1000.0;  // Capital inicial (semente)
-input double InpBandStart          = 500.0;   // Início da 1ª faixa (1 contrato)
-input double InpBandWidth          = 1000.0;  // Largura da faixa (R$1000 → +1 contrato)
+input double InpSeedCapital        = 850.0;   // Saldo Clear atual (já líquido)
+input double InpBandStart          = 500.0;   // 500-1500→1 | 1500-2500→2 | ...
+input double InpBandWidth          = 1000.0;
 input double InpFixedVolume        = 1.0;
 input double InpMaxVolume          = 10.0;
-input double InpMinCapitalTrade    = 500.0;   // Abaixo disso não opera
+input double InpMinCapitalTrade    = 500.0;
 input double InpBrokerMinReliable  = 50.0;
-input bool   InpIncludeFloating    = true;    // Soma floating no capital virtual
-input bool   InpResetVirtualSeed   = false;   // true uma vez p/ regravar semente no GV
-input bool   InpSaveDayHistory     = true;    // CSV diário em MQL5/Files
+input bool   InpIncludeFloating    = true;
+input bool   InpEstimateFees       = true;    // Desconta taxas B3/corretagem estimadas
+input double InpFeePerSide         = 0.25;    // ~R$0,25 por contrato por lado (ida ou volta)
+input bool   InpResetVirtualSeed   = false;   // true só se quiser recomeçar a semente
+input bool   InpSaveDayHistory     = true;
 input string InpHistoryFile        = "ScalpWIN_v2_equity.csv";
 
 input group "=== Risco diário ==="
@@ -117,7 +119,9 @@ int      g_ladderStep = 0;       // 0=nada, 1=fez 1º, 2=fez 2º, 3=fez 3º
 double   g_realizedThisTrade = 0.0;
 datetime g_lastCloseFailLog = 0;
 double   g_seedCapital = 0.0;     // semente efetiva (GV ou input)
-double   g_realizedAll = 0.0;     // cache PnL realizado magic
+double   g_realizedAll = 0.0;     // PnL realizado desde a época da semente
+double   g_feesAll = 0.0;         // taxas estimadas desde a época
+datetime g_equityEpoch = 0;       // só conta deals a partir daqui (evita double-count)
 
 int hEMA50 = INVALID_HANDLE;
 int hEMA200 = INVALID_HANDLE;
@@ -182,13 +186,20 @@ double BrokerReportedCapital()
 //+------------------------------------------------------------------+
 string GVPrefix()
 {
-   return StringFormat("ScalpWIN2_%I64d_", InpMagic);
+   // v204: nova chave → aplica semente R$850 sem precisar Reset manual
+   return StringFormat("ScalpWIN2_v204_%I64d_", InpMagic);
 }
 
 //+------------------------------------------------------------------+
 string GVNameSeed()
 {
    return GVPrefix() + "seed";
+}
+
+//+------------------------------------------------------------------+
+string GVNameEpoch()
+{
+   return GVPrefix() + "epoch";
 }
 
 //+------------------------------------------------------------------+
@@ -206,17 +217,23 @@ string GVNameLastDayStart()
 //+------------------------------------------------------------------+
 void EnsureSeedCapital()
 {
-   string key = GVNameSeed();
-   if(InpResetVirtualSeed || !GlobalVariableCheck(key))
+   string keySeed = GVNameSeed();
+   string keyEpoch = GVNameEpoch();
+
+   if(InpResetVirtualSeed || !GlobalVariableCheck(keySeed) || !GlobalVariableCheck(keyEpoch))
    {
       g_seedCapital = InpSeedCapital;
-      GlobalVariableSet(key, g_seedCapital);
-      PrintFormat("ScalpWIN2: semente gravada R$%.2f (GV %s)", g_seedCapital, key);
+      g_equityEpoch = TimeTradeServer();
+      GlobalVariableSet(keySeed, g_seedCapital);
+      GlobalVariableSet(keyEpoch, (double)g_equityEpoch);
+      PrintFormat("ScalpWIN2: semente R$%.2f a partir de %s (taxas≈R$%.2f/lado) | GV %s",
+                  g_seedCapital, TimeToString(g_equityEpoch, TIME_DATE|TIME_MINUTES),
+                  InpFeePerSide, keySeed);
    }
    else
    {
-      g_seedCapital = GlobalVariableGet(key);
-      // Se o usuário mudou o input e ainda não resetou, mantém GV (histórico)
+      g_seedCapital = GlobalVariableGet(keySeed);
+      g_equityEpoch = (datetime)GlobalVariableGet(keyEpoch);
    }
 }
 
@@ -237,11 +254,19 @@ double FloatingPnLOurs()
 }
 
 //+------------------------------------------------------------------+
-double RealizedPnLAllTime()
+// PnL + taxas só DEPOIS da época da semente (saldo Clear já reflete o passado)
+void CalcRealizedAndFeesSinceEpoch(double &pnlOut, double &feesOut)
 {
-   if(!HistorySelect(0, TimeTradeServer() + 1))
-      return 0.0;
-   double pnl = 0.0;
+   pnlOut = 0.0;
+   feesOut = 0.0;
+   EnsureSeedCapital();
+   datetime from = g_equityEpoch;
+   if(from <= 0) from = 0;
+
+   if(!HistorySelect(from, TimeTradeServer() + 1))
+      return;
+
+   double commissionSum = 0.0;
    int total = HistoryDealsTotal();
    for(int i = 0; i < total; i++)
    {
@@ -249,23 +274,57 @@ double RealizedPnLAllTime()
       if(ticket == 0) continue;
       if((long)HistoryDealGetInteger(ticket, DEAL_MAGIC) != InpMagic) continue;
       if(HistoryDealGetString(ticket, DEAL_SYMBOL) != _Symbol) continue;
+
+      datetime t = (datetime)HistoryDealGetInteger(ticket, DEAL_TIME);
+      if(t < from) continue;
+
       long entry = HistoryDealGetInteger(ticket, DEAL_ENTRY);
-      if(entry != DEAL_ENTRY_OUT && entry != DEAL_ENTRY_INOUT && entry != DEAL_ENTRY_OUT_BY)
-         continue;
-      pnl += HistoryDealGetDouble(ticket, DEAL_PROFIT)
-           + HistoryDealGetDouble(ticket, DEAL_SWAP)
-           + HistoryDealGetDouble(ticket, DEAL_COMMISSION);
+      double vol = HistoryDealGetDouble(ticket, DEAL_VOLUME);
+      double comm = HistoryDealGetDouble(ticket, DEAL_COMMISSION);
+
+      // Taxa estimada em cada lado (abertura/fechamento)
+      if(InpEstimateFees && InpFeePerSide > 0.0 &&
+         (entry == DEAL_ENTRY_IN || entry == DEAL_ENTRY_OUT ||
+          entry == DEAL_ENTRY_INOUT || entry == DEAL_ENTRY_OUT_BY))
+      {
+         feesOut += InpFeePerSide * MathMax(vol, 1.0);
+      }
+
+      if(entry == DEAL_ENTRY_OUT || entry == DEAL_ENTRY_INOUT || entry == DEAL_ENTRY_OUT_BY)
+      {
+         pnlOut += HistoryDealGetDouble(ticket, DEAL_PROFIT)
+                 + HistoryDealGetDouble(ticket, DEAL_SWAP)
+                 + comm;
+         commissionSum += comm;
+      }
    }
+
+   // Se o MT5 já trouxe comissão real relevante, não desconta estimativa de novo
+   if(InpEstimateFees && MathAbs(commissionSum) >= 0.01)
+      feesOut = 0.0;
+}
+
+//+------------------------------------------------------------------+
+double RealizedPnLAllTime()
+{
+   double pnl, fees;
+   CalcRealizedAndFeesSinceEpoch(pnl, fees);
    g_realizedAll = pnl;
+   g_feesAll = fees;
    return pnl;
 }
 
 //+------------------------------------------------------------------+
-// Capital virtual = semente + PnL histórico do magic (+ floating opcional)
+// Capital virtual = semente Clear + PnL novo - taxas (+ floating)
 double GetVirtualCapital()
 {
    EnsureSeedCapital();
-   double cap = g_seedCapital + RealizedPnLAllTime();
+   double pnl, fees;
+   CalcRealizedAndFeesSinceEpoch(pnl, fees);
+   g_realizedAll = pnl;
+   g_feesAll = fees;
+
+   double cap = g_seedCapital + pnl - fees;
    if(InpIncludeFloating)
       cap += FloatingPnLOurs();
    g_capitalSource = "virtual";
@@ -377,19 +436,19 @@ void AppendDayHistory(const datetime dayStamp, const double dayStartCap, const d
 
    FileSeek(h, 0, SEEK_END);
    if(FileTell(h) == 0)
-      FileWriteString(h, "date,day_start,day_pnl,day_end,contracts,seed,realized_all,source\n");
+      FileWriteString(h, "date,day_start,day_pnl,day_end,contracts,seed,realized_all,fees_est,source\n");
 
    MqlDateTime dt;
    TimeToStruct(dayStamp, dt);
-   string line = StringFormat("%04d-%02d-%02d,%.2f,%.2f,%.2f,%.0f,%.2f,%.2f,%s\n",
+   string line = StringFormat("%04d-%02d-%02d,%.2f,%.2f,%.2f,%.0f,%.2f,%.2f,%.2f,%s\n",
                               dt.year, dt.mon, dt.day,
                               dayStartCap, dayPnL, dayEndCap, vol,
-                              g_seedCapital, g_realizedAll, g_capitalSource);
+                              g_seedCapital, g_realizedAll, g_feesAll, g_capitalSource);
    FileWriteString(h, line);
    FileClose(h);
-   PrintFormat("ScalpWIN2: histórico + %s | ini=R$%.2f pnl=R$%.2f fim=R$%.2f vol≈%.0f",
+   PrintFormat("ScalpWIN2: histórico + %s | ini=R$%.2f pnl=R$%.2f fees=R$%.2f fim=R$%.2f vol≈%.0f",
                StringFormat("%04d-%02d-%02d", dt.year, dt.mon, dt.day),
-               dayStartCap, dayPnL, dayEndCap, vol);
+               dayStartCap, dayPnL, g_feesAll, dayEndCap, vol);
 }
 
 //+------------------------------------------------------------------+
@@ -1108,16 +1167,16 @@ void UpdateChartComment()
    string ladder = StringFormat("L%d", g_ladderStep);
    string skip = (g_lastSkipReason != "" ? "\nskip: " + g_lastSkipReason : "");
    string txt = StringFormat(
-      "ScalpWIN v2.03 | %s\ncap R$%.0f (%s) seed R$%.0f | vol≈%.0f | dayPnL R$%.0f\nspread %d | escada %s | SL≤%.0f%% | %s%s",
+      "ScalpWIN v2.04 | %s\ncap R$%.0f (%s) seed R$%.0f | fees R$%.2f | vol≈%.0f\ndayPnL R$%.0f | spread %d | escada %s | %s%s",
       _Symbol,
       GetCapital(),
       g_capitalSource,
       g_seedCapital,
+      g_feesAll,
       CalcVolume(),
       DayPnLMoney(),
       CurrentSpreadPoints(),
       ladder,
-      InpMaxSL_CapitalPct,
       status,
       skip
    );
@@ -1159,21 +1218,23 @@ int OnInit()
                   DayPnLMoney(), DailyLossLimitMoney());
    }
 
-   PrintFormat("ScalpWIN_v2.03 init | %s | capital=R$%.2f (%s) seed=R$%.2f realized=R$%.2f | vol≈%.0f | stopDia=%.1f%% | magic=%I64d",
-               _Symbol, GetCapital(), g_capitalSource, g_seedCapital, g_realizedAll,
-               CalcVolume(), InpDailyLossPercent, InpMagic);
-   PrintFormat("faixas: R$%.0f + k*R$%.0f → contratos | minTrade=R$%.0f | hist=%s (%s)",
-               InpBandStart, InpBandWidth, InpMinCapitalTrade,
-               (InpSaveDayHistory ? "sim" : "nao"), InpHistoryFile);
+   PrintFormat("ScalpWIN_v2.04 init | %s | capital=R$%.2f (%s) seed=R$%.2f realized=R$%.2f fees=R$%.2f | vol≈%.0f | magic=%I64d",
+               _Symbol, GetCapital(), g_capitalSource, g_seedCapital, g_realizedAll, g_feesAll,
+               CalcVolume(), InpMagic);
+   PrintFormat("faixas: R$%.0f+k*R$%.0f | taxa≈R$%.2f/lado (%s) | hist=%s | epoch=%s",
+               InpBandStart, InpBandWidth, InpFeePerSide,
+               (InpEstimateFees ? "on" : "off"),
+               (InpSaveDayHistory ? InpHistoryFile : "off"),
+               TimeToString(g_equityEpoch, TIME_DATE|TIME_MINUTES));
    PrintFormat("sessao %02d:%02d-%02d:%02d flat %02d:%02d | break=%d ADX>=%.1f body>=%.2fxATR | volFiltro=%s (x%.2f/%d)",
                InpStartHour, InpStartMinute, InpEndHour, InpEndMinute,
                InpFlatHour, InpFlatMinute, InpBreakBars, InpADXMin, InpMinBodyATR,
                (InpUseVolumeFilter ? "sim" : "nao"), InpMinVolMult, InpVolAvgBars);
-   PrintFormat("escada: %.1f%%→fecha %.0f%% | %.1f%%→fecha +%.0f%% | L3=%s | SL ATR=%.2fx teto %.1f%% cap",
+   PrintFormat("escada: %.1f%%→fecha %.0f%% | %.1f%%→fecha +%.0f%% | L3=%s | SL ATR=%.2fx teto %.1f%% cap | stopDia=%.1f%%",
                InpLadder1_Pct, InpLadder1_CloseFrac * 100.0,
                InpLadder2_Pct, InpLadder2_CloseFrac * 100.0,
                (InpUseLadder3 ? "sim" : "nao/softlock"),
-               InpSL_ATR_Mult, InpMaxSL_CapitalPct);
+               InpSL_ATR_Mult, InpMaxSL_CapitalPct, InpDailyLossPercent);
    PrintFormat("sem teto de trades/dia | softLock arm=%.2fxATR trail=%.2fxATR",
                InpSoftStart_ATR, InpTrail_ATR);
    UpdateChartComment();
