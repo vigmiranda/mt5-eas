@@ -3,10 +3,10 @@
 //| Daytrade WIN (Clear) - rompimento + escada de lucro % + soft lock |
 //| Volume por capital | SL até 5% do capital | stop dia 10%          |
 //| Sem teto de trades/dia | parciais: 2%→50% · 5%→+25% · resto trail |
-//| v2.01: fecha 1 contrato com PositionClose; escada mais robusta    |
+//| v2.02: filtros mais duros + volume relativo + sessão enxuta       |
 //+------------------------------------------------------------------+
 #property copyright "Vitor / mt5-eas"
-#property version   "2.01"
+#property version   "2.02"
 #property strict
 
 #include <Trade/Trade.mqh>
@@ -45,22 +45,25 @@ input int    InpMaxPositions       = 1;
 input int    InpMaxSpreadPoints    = 40;
 
 input group "=== Sessão (horário do servidor MT5) ==="
-input int    InpStartHour          = 10;
-input int    InpStartMinute        = 15;
-input int    InpEndHour            = 16;
-input int    InpEndMinute          = 45;
-input int    InpFlatHour           = 17;
-input int    InpFlatMinute         = 0;
+input int    InpStartHour          = 10;      // Evita abertura suja
+input int    InpStartMinute        = 45;
+input int    InpEndHour            = 15;      // Evita final de pregão
+input int    InpEndMinute          = 30;
+input int    InpFlatHour           = 15;      // Zera posição daytrade
+input int    InpFlatMinute         = 45;
 
 input group "=== Entrada (rompimento) ==="
-input int    InpBreakBars          = 3;
+input int    InpBreakBars          = 5;       // Janela maior = menos falso rompimento
 input int    InpEMAFast            = 50;
 input int    InpEMASlow            = 200;
 input bool   InpUseEmaTrend        = true;
 input int    InpADXPeriod          = 14;
-input double InpADXMin             = 20.0;
+input double InpADXMin             = 25.0;    // Mais seletivo (era 20)
 input bool   InpUseADXFilter       = true;
-input double InpMinBodyATR         = 0.35;
+input double InpMinBodyATR         = 0.50;    // Corpo mínimo mais exigente (era 0.35)
+input bool   InpUseVolumeFilter    = true;    // Só entra com volume acima da média
+input int    InpVolAvgBars         = 20;      // Média de tick volume
+input double InpMinVolMult         = 1.30;    // Volume barra >= X * média
 input ENUM_TIMEFRAMES InpTF        = PERIOD_M5;
 
 input group "=== Stop (folgado, teto em % do capital) ==="
@@ -113,6 +116,7 @@ int hEMA50 = INVALID_HANDLE;
 int hEMA200 = INVALID_HANDLE;
 int hADX = INVALID_HANDLE;
 int hATR = INVALID_HANDLE;
+int hVol = INVALID_HANDLE;
 
 //+------------------------------------------------------------------+
 double ClampVolume(const double v)
@@ -494,6 +498,44 @@ bool NormalizeSL(const long type, const double price, double &sl)
 }
 
 //+------------------------------------------------------------------+
+//+------------------------------------------------------------------+
+bool VolumeOK(string &why)
+{
+   why = "";
+   if(!InpUseVolumeFilter)
+      return true;
+
+   int need = MathMax(InpVolAvgBars + 2, 5);
+   long vols[];
+   ArraySetAsSeries(vols, true);
+   if(CopyTickVolume(_Symbol, InpTF, 1, need, vols) < need)
+   {
+      why = "volume sem dados";
+      return false;
+   }
+
+   long v1 = vols[0];
+   double sum = 0.0;
+   for(int i = 1; i <= InpVolAvgBars; i++)
+      sum += (double)vols[i];
+   double avg = sum / InpVolAvgBars;
+   if(avg <= 0.0)
+   {
+      why = "média volume zerada";
+      return false;
+   }
+
+   double mult = (double)v1 / avg;
+   if(mult < InpMinVolMult)
+   {
+      why = StringFormat("volume fraco %.2fx < %.2fx (v=%I64d avg=%.0f)",
+                         mult, InpMinVolMult, v1, avg);
+      return false;
+   }
+   return true;
+}
+
+//+------------------------------------------------------------------+
 bool GetSignal(int &dir)
 {
    dir = 0;
@@ -506,6 +548,13 @@ bool GetSignal(int &dir)
    if(InpUseADXFilter && adx < InpADXMin)
    {
       LogSkip(StringFormat("ADX fraco %.1f < %.1f", adx, InpADXMin));
+      return true;
+   }
+
+   string volWhy = "";
+   if(!VolumeOK(volWhy))
+   {
+      LogSkip(volWhy);
       return true;
    }
 
@@ -545,7 +594,8 @@ bool GetSignal(int &dir)
       dir = 1;
       g_lastSkipReason = "";
       if(InpVerboseLog)
-         PrintFormat("ScalpWIN2: SINAL BUY | close=%.0f > hh=%.0f | ADX=%.1f", close1, hh, adx);
+         PrintFormat("ScalpWIN2: SINAL BUY | close=%.0f > hh=%.0f | ADX=%.1f | bodyOK | volOK",
+                     close1, hh, adx);
       return true;
    }
 
@@ -559,7 +609,8 @@ bool GetSignal(int &dir)
       dir = -1;
       g_lastSkipReason = "";
       if(InpVerboseLog)
-         PrintFormat("ScalpWIN2: SINAL SELL | close=%.0f < ll=%.0f | ADX=%.1f", close1, ll, adx);
+         PrintFormat("ScalpWIN2: SINAL SELL | close=%.0f < ll=%.0f | ADX=%.1f | bodyOK | volOK",
+                     close1, ll, adx);
       return true;
    }
 
@@ -932,7 +983,7 @@ void UpdateChartComment()
    string ladder = StringFormat("L%d", g_ladderStep);
    string skip = (g_lastSkipReason != "" ? "\nskip: " + g_lastSkipReason : "");
    string txt = StringFormat(
-      "ScalpWIN v2.01 | %s\ncapital R$%.0f (%s) | vol≈%.0f | dayPnL R$%.0f\nspread %d | escada %s | SL≤%.0f%% | %s%s",
+      "ScalpWIN v2.02 | %s\ncapital R$%.0f (%s) | vol≈%.0f | dayPnL R$%.0f\nspread %d | escada %s | SL≤%.0f%% | %s%s",
       _Symbol,
       GetCapital(),
       g_capitalSource,
@@ -960,9 +1011,11 @@ int OnInit()
    hEMA200 = iMA(_Symbol, InpTF, InpEMASlow, 0, MODE_EMA, PRICE_CLOSE);
    hADX    = iADX(_Symbol, InpTF, InpADXPeriod);
    hATR    = iATR(_Symbol, InpTF, InpATRPeriod);
+   hVol    = iVolumes(_Symbol, InpTF, VOLUME_TICK);
 
    if(hEMA50 == INVALID_HANDLE || hEMA200 == INVALID_HANDLE ||
-      hADX == INVALID_HANDLE || hATR == INVALID_HANDLE)
+      hADX == INVALID_HANDLE || hATR == INVALID_HANDLE ||
+      (InpUseVolumeFilter && hVol == INVALID_HANDLE))
    {
       Print("ScalpWIN2: falha indicadores");
       return INIT_FAILED;
@@ -979,9 +1032,13 @@ int OnInit()
                   DayPnLMoney(), DailyLossLimitMoney());
    }
 
-   PrintFormat("ScalpWIN_v2.01 init | %s | capital=R$%.2f (%s) | vol≈%.0f | stopDia=%.1f%% (R$%.0f) | magic=%I64d",
+   PrintFormat("ScalpWIN_v2.02 init | %s | capital=R$%.2f (%s) | vol≈%.0f | stopDia=%.1f%% (R$%.0f) | magic=%I64d",
                _Symbol, GetCapital(), g_capitalSource, CalcVolume(),
                InpDailyLossPercent, DailyLossLimitMoney(), InpMagic);
+   PrintFormat("sessao %02d:%02d-%02d:%02d flat %02d:%02d | break=%d ADX>=%.1f body>=%.2fxATR | volFiltro=%s (x%.2f/%d)",
+               InpStartHour, InpStartMinute, InpEndHour, InpEndMinute,
+               InpFlatHour, InpFlatMinute, InpBreakBars, InpADXMin, InpMinBodyATR,
+               (InpUseVolumeFilter ? "sim" : "nao"), InpMinVolMult, InpVolAvgBars);
    PrintFormat("escada: %.1f%%→fecha %.0f%% | %.1f%%→fecha +%.0f%% | L3=%s | SL ATR=%.2fx teto %.1f%% cap",
                InpLadder1_Pct, InpLadder1_CloseFrac * 100.0,
                InpLadder2_Pct, InpLadder2_CloseFrac * 100.0,
@@ -1001,6 +1058,7 @@ void OnDeinit(const int reason)
    if(hEMA200 != INVALID_HANDLE) IndicatorRelease(hEMA200);
    if(hADX    != INVALID_HANDLE) IndicatorRelease(hADX);
    if(hATR    != INVALID_HANDLE) IndicatorRelease(hATR);
+   if(hVol    != INVALID_HANDLE) IndicatorRelease(hVol);
 }
 
 //+------------------------------------------------------------------+
