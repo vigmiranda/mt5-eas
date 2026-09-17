@@ -3,10 +3,10 @@
 //| Daytrade WIN (Clear) - rompimento + escada de lucro % + soft lock |
 //| Volume por capital | SL até 5% do capital | stop dia 10%          |
 //| Sem teto de trades/dia | parciais: 2%→50% · 5%→+25% · resto trail |
-//| Gráfico: WINV26 (ou WIN$) M5                                      |
+//| v2.01: fecha 1 contrato com PositionClose; escada mais robusta    |
 //+------------------------------------------------------------------+
 #property copyright "Vitor / mt5-eas"
-#property version   "2.00"
+#property version   "2.01"
 #property strict
 
 #include <Trade/Trade.mqh>
@@ -639,16 +639,57 @@ double RoundDownVolume(const double v)
    return out;
 }
 
+datetime g_lastCloseFailLog = 0;
+
 //+------------------------------------------------------------------+
-bool ClosePartial(const ulong ticket, const double volClose, const string reason)
+bool CloseVolume(const ulong ticket, const double volClose, const string reason)
 {
    if(volClose <= 0.0) return false;
-   if(!trade.PositionClosePartial(ticket, volClose))
-   {
-      PrintFormat("ScalpWIN2: parcial falhou %s vol=%.2f ret=%u", reason, volClose, trade.ResultRetcode());
+   if(!PositionSelectByTicket(ticket))
       return false;
+
+   double posVol = PositionGetDouble(POSITION_VOLUME);
+   double vmin = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   double want = RoundDownVolume(volClose);
+   if(want < vmin) return false;
+
+   trade.SetExpertMagicNumber(InpMagic);
+   trade.SetDeviationInPoints(InpSlippagePoints);
+   trade.SetTypeFillingBySymbol(_Symbol);
+
+   // Volume cheio: SEMPRE PositionClose (Clear rejeita ClosePartial do total → ret 10016)
+   if(want >= posVol - 1e-8)
+   {
+      if(!trade.PositionClose(ticket))
+      {
+         datetime now = TimeTradeServer();
+         if(now != g_lastCloseFailLog)
+         {
+            g_lastCloseFailLog = now;
+            PrintFormat("ScalpWIN2: CLOSE total falhou %s vol=%.2f ret=%u %s",
+                        reason, posVol, trade.ResultRetcode(), trade.ResultComment());
+         }
+         return false;
+      }
+      PrintFormat("ScalpWIN2: ZEROU %s | vol=%.2f | step=%d", reason, posVol, g_ladderStep);
+      return true;
    }
-   PrintFormat("ScalpWIN2: PARCIAL %s | fechou %.2f | step=%d", reason, volClose, g_ladderStep);
+
+   if(!trade.PositionClosePartial(ticket, want))
+   {
+      datetime now = TimeTradeServer();
+      if(now != g_lastCloseFailLog)
+      {
+         g_lastCloseFailLog = now;
+         PrintFormat("ScalpWIN2: parcial falhou %s vol=%.2f ret=%u %s — tentando close total",
+                     reason, want, trade.ResultRetcode(), trade.ResultComment());
+      }
+      if(!trade.PositionClose(ticket))
+         return false;
+      PrintFormat("ScalpWIN2: ZEROU (fallback) %s | vol=%.2f", reason, posVol);
+      return true;
+   }
+   PrintFormat("ScalpWIN2: PARCIAL %s | fechou %.2f de %.2f | step=%d", reason, want, posVol, g_ladderStep);
    return true;
 }
 
@@ -700,25 +741,31 @@ void ManageLadderAndSoftLock()
    double tradePnL = TradeProfitMoney(profit);
    double tradePct = 100.0 * tradePnL / cap;
 
+   if(InpVerboseLog && tradePct >= InpLadder1_Pct && g_ladderStep < 1)
+      PrintFormat("ScalpWIN2: alvo L1 em vista | tradePnL=R$%.2f (%.2f%% cap) vol=%.0f",
+                  tradePnL, tradePct, vol);
+
    // --- Escada de realização ---
    if(g_ladderStep < 1 && tradePct >= InpLadder1_Pct)
    {
       double want = RoundDownVolume(g_posOpenVol * InpLadder1_CloseFrac);
-      if(g_posOpenVol < 2.0 - 1e-8)
-      {
-         // 1 contrato: fecha tudo no 1º alvo
+      // 1 contrato (ou fracao < 2): zera tudo no 1º alvo
+      if(g_posOpenVol < 2.0 - 1e-8 || vol < 2.0 - 1e-8)
          want = vol;
-      }
       want = MathMin(want, vol);
       if(want >= SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN) - 1e-8)
       {
          double before = profit;
-         if(ClosePartial(ticket, want, StringFormat("L1 %.1f%% cap", InpLadder1_Pct)))
+         if(CloseVolume(ticket, want, StringFormat("L1 %.1f%% cap (pnl R$%.0f)", InpLadder1_Pct, tradePnL)))
          {
             g_ladderStep = 1;
-            // aproxima realizado desta parcial
             if(vol > 0.0)
                g_realizedThisTrade += before * (want / vol);
+            if(!SelectOurPosition(ticket, type, vol, open, sl, profit))
+            {
+               ResetPosState();
+               return; // zerou tudo
+            }
          }
       }
       else if(InpVerboseLog)
@@ -737,7 +784,6 @@ void ManageLadderAndSoftLock()
       if(want <= 0.0 && vol > 0.0)
          want = RoundDownVolume(vol * 0.5);
       want = MathMin(want, vol);
-      // Se após fechar sobraria menos que o mínimo, fecha tudo
       double remain = vol - want;
       double vmin = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
       if(remain > 0.0 && remain < vmin)
@@ -746,11 +792,16 @@ void ManageLadderAndSoftLock()
       if(want >= vmin - 1e-8)
       {
          double before = profit;
-         if(ClosePartial(ticket, want, StringFormat("L2 %.1f%% cap", InpLadder2_Pct)))
+         if(CloseVolume(ticket, want, StringFormat("L2 %.1f%% cap (pnl R$%.0f)", InpLadder2_Pct, tradePnL)))
          {
             g_ladderStep = 2;
             if(vol > 0.0)
                g_realizedThisTrade += before * (want / vol);
+            if(!SelectOurPosition(ticket, type, vol, open, sl, profit))
+            {
+               ResetPosState();
+               return;
+            }
          }
       }
    }
@@ -763,8 +814,7 @@ void ManageLadderAndSoftLock()
 
    if(InpUseLadder3 && g_ladderStep == 2 && tradePct >= InpLadder3_Pct)
    {
-      double want = vol; // zera o resto
-      if(ClosePartial(ticket, want, StringFormat("L3 %.1f%% cap", InpLadder3_Pct)))
+      if(CloseVolume(ticket, vol, StringFormat("L3 %.1f%% cap", InpLadder3_Pct)))
       {
          g_ladderStep = 3;
          ResetPosState();
@@ -774,6 +824,23 @@ void ManageLadderAndSoftLock()
 
    if(!SelectOurPosition(ticket, type, vol, open, sl, profit))
       return;
+
+   // Segurança: se já passou bem do L2 e ainda está 100% aberto (falha anterior), zera
+   if(g_ladderStep < 1 && tradePct >= InpLadder2_Pct)
+   {
+      PrintFormat("ScalpWIN2: SAFETY close | trade %.1f%% >= L2 e escada ainda L0", tradePct);
+      if(CloseVolume(ticket, vol, "SAFETY L2"))
+      {
+         ResetPosState();
+         return;
+      }
+   }
+
+   if(!SelectOurPosition(ticket, type, vol, open, sl, profit))
+      return;
+
+   tradePnL = TradeProfitMoney(profit);
+   tradePct = 100.0 * tradePnL / cap;
 
    // --- Soft lock no runner (mais apertado após parciais) ---
    double atrPts = ATRPointsRaw();
@@ -829,8 +896,12 @@ void ManageLadderAndSoftLock()
 
    if(newSL > 0.0 && MathAbs(newSL - sl) >= _Point)
    {
+      trade.SetExpertMagicNumber(InpMagic);
+      trade.SetDeviationInPoints(InpSlippagePoints);
+      trade.SetTypeFillingBySymbol(_Symbol);
       if(!trade.PositionModify(ticket, newSL, 0.0))
-         PrintFormat("ScalpWIN2: softlock falhou %u", trade.ResultRetcode());
+         PrintFormat("ScalpWIN2: softlock falhou ret=%u %s | newSL=%.0f bid=%.0f ask=%.0f",
+                     trade.ResultRetcode(), trade.ResultComment(), newSL, bid, ask);
       else if(InpVerboseLog)
          PrintFormat("ScalpWIN2: SOFT+ SL %.0f -> %.0f | ladder=%d | tradePnL=R$%.0f (%.1f%%)",
                      sl, newSL, g_ladderStep, tradePnL, tradePct);
@@ -862,7 +933,7 @@ void UpdateChartComment()
    string ladder = StringFormat("L%d", g_ladderStep);
    string skip = (g_lastSkipReason != "" ? "\nskip: " + g_lastSkipReason : "");
    string txt = StringFormat(
-      "ScalpWIN v2.00 | %s\ncapital R$%.0f (%s) | vol≈%.0f | dayPnL R$%.0f\nspread %d | escada %s | SL≤%.0f%% | %s%s",
+      "ScalpWIN v2.01 | %s\ncapital R$%.0f (%s) | vol≈%.0f | dayPnL R$%.0f\nspread %d | escada %s | SL≤%.0f%% | %s%s",
       _Symbol,
       GetCapital(),
       g_capitalSource,
@@ -909,7 +980,7 @@ int OnInit()
                   DayPnLMoney(), DailyLossLimitMoney());
    }
 
-   PrintFormat("ScalpWIN_v2.00 init | %s | capital=R$%.2f (%s) | vol≈%.0f | stopDia=%.1f%% (R$%.0f) | magic=%I64d",
+   PrintFormat("ScalpWIN_v2.01 init | %s | capital=R$%.2f (%s) | vol≈%.0f | stopDia=%.1f%% (R$%.0f) | magic=%I64d",
                _Symbol, GetCapital(), g_capitalSource, CalcVolume(),
                InpDailyLossPercent, DailyLossLimitMoney(), InpMagic);
    PrintFormat("escada: %.1f%%→fecha %.0f%% | %.1f%%→fecha +%.0f%% | L3=%s | SL ATR=%.2fx teto %.1f%% cap",
