@@ -15,22 +15,22 @@ Automação em **MetaTrader 5** para duas corretoras:
 
 | Ativo | Timeframe | EA | Magic | Versão | Papel |
 |-------|-----------|----|-------|--------|-------|
-| WINV26 / WIN$ | M5 | **ScalpWIN_v2** | 260917 | 2.04 | Daytrade escada % (recomendado) |
+| WINV26 / WIN$ | M5 | **ScalpWIN_v2** | 260917 | 2.05 | Daytrade escada % (recomendado) |
 | WINV26 / WIN$ | M5 | ScalpWIN_v1 | 260916 | 1.02 | Scalp TP/ATR (referência) |
 | WINV26 / WIN$ | M5 | TrendWIN_v1 | 260914 | 1.11 | Tendência (referência) |
 
 **ScalpWIN_v2** (preferido)
 - Rompimento M5 + EMA/ADX (entrada seletiva)
-- **Capital virtual (Clear):** semente **R$850** (saldo atual) + PnL novo do magic − taxas estimadas (~R$0,25/lado)
-- **Faixas de volume:** R$500–1500 → 1 · R$1500–2500 → 2 · R$2500–3500 → 3 · …
-- **Histórico diário** em `MQL5/Files/ScalpWIN_v2_equity.csv` (ini / dayPnL / fees / fim / contratos)
-- PnL antigo da Clear **não** é recontado (época começa no attach do v2.04)
-- **v2.02+ filtros:** ADX ≥ 25, corpo ≥ 0,50×ATR, rompimento 5 barras, volume ≥ 1,30× média
-- Sessão **10:45–15:30**, flat ~15:45
+- **Capital virtual (Clear):** semente **R$850** + PnL novo − taxas (~R$0,25/lado)
+- **Faixas:** R$500–1500 → 1 · R$1500–2500 → 2 · …
+- **Filtros v2.05 (afrouxados):** ADX ≥ 22, corpo ≥ 0,40×ATR, rompimento 4 barras, volume ≥ 1,15× média
+- Sessão **10:30–15:45**, flat **16:00**
+- Inputs renomeados no v2.05 para o MT5 **não reaproveitar** valores antigos salvos no gráfico
+- Histórico: `MQL5/Files/ScalpWIN_v2_equity.csv`
 - Escada: **+2% → 50%** · **+5% → +25%** · resto soft lock (1 contrato zera no L1)
 - SL folgado ATR, teto **5%** · stop diário **10%** · sem teto de trades/dia
 
-Instalação: copie `eas/clear/ScalpWIN_v2.mq5` → `MQL5/Experts/`, compile (F7), arraste no **WINV26 M5**. Remova ScalpWIN_v1 / TrendWIN. Defaults já vêm com semente R$850 + taxas; confira no log `v2.04` e `seed=R$850`.
+Instalação: copie `eas/clear/ScalpWIN_v2.mq5` → `MQL5/Experts/`, compile (F7). **Remova** o EA do gráfico e arraste de novo (não use .set antigo). Log deve mostrar `v2.05`, `seed=R$850`, `ADX>=22`, `volFiltro ... x1.15`.
 
 **ScalpWIN_v1** / **TrendWIN_v1**: referências anteriores.
 

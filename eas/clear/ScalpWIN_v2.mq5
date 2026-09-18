@@ -3,10 +3,10 @@
 //| Daytrade WIN (Clear) - rompimento + escada de lucro % + soft lock |
 //| Volume por capital | SL até 5% do capital | stop dia 10%          |
 //| Sem teto de trades/dia | parciais: 2%→50% · 5%→+25% · resto trail |
-//| v2.04: semente R$850 + taxas B3 estimadas no capital virtual      |
+//| v2.05: defaults forçados (novos inputs) + filtros um pouco mais folgados      |
 //+------------------------------------------------------------------+
 #property copyright "Vitor / mt5-eas"
-#property version   "2.04"
+#property version   "2.05"
 #property strict
 
 #include <Trade/Trade.mqh>
@@ -31,7 +31,7 @@ enum ENUM_CAPITAL_MODE
 input group "=== Volume / capital virtual ==="
 input ENUM_WIN_SIZING   InpSizingMode        = SIZING_BY_CAPITAL;
 input ENUM_CAPITAL_MODE InpCapitalMode       = CAPITAL_VIRTUAL; // Clear: Virtual
-input double InpSeedCapital        = 850.0;   // Saldo Clear atual (já líquido)
+input double InpSeedBal           = 850.0;   // Saldo Clear atual (R$850)
 input double InpBandStart          = 500.0;   // 500-1500→1 | 1500-2500→2 | ...
 input double InpBandWidth          = 1000.0;
 input double InpFixedVolume        = 1.0;
@@ -52,25 +52,25 @@ input int    InpMaxPositions       = 1;
 input int    InpMaxSpreadPoints    = 40;
 
 input group "=== Sessão (horário do servidor MT5) ==="
-input int    InpStartHour          = 10;      // Evita abertura suja
-input int    InpStartMinute        = 45;
-input int    InpEndHour            = 15;      // Evita final de pregão
-input int    InpEndMinute          = 30;
-input int    InpFlatHour           = 15;      // Zera posição daytrade
-input int    InpFlatMinute         = 45;
+input int    InpSessStartH         = 10;
+input int    InpSessStartM         = 30;      // 10:30 (um pouco antes que 10:45)
+input int    InpSessEndH           = 15;
+input int    InpSessEndM           = 45;      // 15:45
+input int    InpFlatH              = 16;      // Flat 16:00
+input int    InpFlatM              = 0;
 
 input group "=== Entrada (rompimento) ==="
-input int    InpBreakBars          = 5;       // Janela maior = menos falso rompimento
+input int    InpBreakBarsN         = 4;       // 4 barras (era 5; um pouco menos rígido)
 input int    InpEMAFast            = 50;
 input int    InpEMASlow            = 200;
 input bool   InpUseEmaTrend        = true;
 input int    InpADXPeriod          = 14;
-input double InpADXMin             = 25.0;    // Mais seletivo (era 20)
+input double InpAdxMinVal          = 22.0;    // Afrouxado (era 25)
 input bool   InpUseADXFilter       = true;
-input double InpMinBodyATR         = 0.50;    // Corpo mínimo mais exigente (era 0.35)
+input double InpBodyAtrMin         = 0.40;    // Afrouxado (era 0.50)
 input bool   InpUseVolumeFilter    = true;    // Só entra com volume acima da média
 input int    InpVolAvgBars         = 20;      // Média de tick volume
-input double InpMinVolMult         = 1.30;    // Volume barra >= X * média
+input double InpVolMinMult         = 1.15;    // Afrouxado (era 1.30)
 input ENUM_TIMEFRAMES InpTF        = PERIOD_M5;
 
 input group "=== Stop (folgado, teto em % do capital) ==="
@@ -186,8 +186,8 @@ double BrokerReportedCapital()
 //+------------------------------------------------------------------+
 string GVPrefix()
 {
-   // v204: nova chave → aplica semente R$850 sem precisar Reset manual
-   return StringFormat("ScalpWIN2_v204_%I64d_", InpMagic);
+   // v205: nova chave → aplica semente R$850 sem precisar Reset manual
+   return StringFormat("ScalpWIN2_v205_%I64d_", InpMagic);
 }
 
 //+------------------------------------------------------------------+
@@ -222,7 +222,7 @@ void EnsureSeedCapital()
 
    if(InpResetVirtualSeed || !GlobalVariableCheck(keySeed) || !GlobalVariableCheck(keyEpoch))
    {
-      g_seedCapital = InpSeedCapital;
+      g_seedCapital = InpSeedBal;
       g_equityEpoch = TimeTradeServer();
       GlobalVariableSet(keySeed, g_seedCapital);
       GlobalVariableSet(keyEpoch, (double)g_equityEpoch);
@@ -340,7 +340,7 @@ double GetCapital()
    if(InpCapitalMode == CAPITAL_MANUAL)
    {
       g_capitalSource = "manual";
-      return MathMax(0.0, InpSeedCapital);
+      return MathMax(0.0, InpSeedBal);
    }
 
    double broker = BrokerReportedCapital();
@@ -495,8 +495,8 @@ bool SessionOpen(const datetime now)
    MqlDateTime dt;
    TimeToStruct(now, dt);
    int nowMin = dt.hour * 60 + dt.min;
-   return (nowMin >= InpStartHour * 60 + InpStartMinute &&
-           nowMin <  InpEndHour * 60 + InpEndMinute);
+   return (nowMin >= InpSessStartH * 60 + InpSessStartM &&
+           nowMin <  InpSessEndH * 60 + InpSessEndM);
 }
 
 //+------------------------------------------------------------------+
@@ -504,7 +504,7 @@ bool ShouldFlat(const datetime now)
 {
    MqlDateTime dt;
    TimeToStruct(now, dt);
-   return ((dt.hour * 60 + dt.min) >= InpFlatHour * 60 + InpFlatMinute);
+   return ((dt.hour * 60 + dt.min) >= InpFlatH * 60 + InpFlatM);
 }
 
 //+------------------------------------------------------------------+
@@ -710,10 +710,10 @@ bool VolumeOK(string &why)
    }
 
    double mult = (double)v1 / avg;
-   if(mult < InpMinVolMult)
+   if(mult < InpVolMinMult)
    {
       why = StringFormat("volume fraco %.2fx < %.2fx (v=%I64d avg=%.0f)",
-                         mult, InpMinVolMult, v1, avg);
+                         mult, InpVolMinMult, v1, avg);
       return false;
    }
    return true;
@@ -729,9 +729,9 @@ bool GetSignal(int &dir)
    if(!Copy1(hADX, 0, adx)) { LogSkip("ADX sem dados"); return false; }
    if(!Copy1(hATR, 0, atr) || atr <= 0.0) { LogSkip("ATR sem dados"); return false; }
 
-   if(InpUseADXFilter && adx < InpADXMin)
+   if(InpUseADXFilter && adx < InpAdxMinVal)
    {
-      LogSkip(StringFormat("ADX fraco %.1f < %.1f", adx, InpADXMin));
+      LogSkip(StringFormat("ADX fraco %.1f < %.1f", adx, InpAdxMinVal));
       return true;
    }
 
@@ -747,14 +747,14 @@ bool GetSignal(int &dir)
    if(open1 <= 0.0 || close1 <= 0.0) { LogSkip("candle 1 sem OHLC"); return false; }
 
    double body = MathAbs(close1 - open1);
-   double minBody = atr * InpMinBodyATR;
+   double minBody = atr * InpBodyAtrMin;
    if(body < minBody)
    {
       LogSkip(StringFormat("corpo fraco %.0f < %.0f pts", body / _Point, minBody / _Point));
       return true;
    }
 
-   int bars = MathMax(2, InpBreakBars);
+   int bars = MathMax(2, InpBreakBarsN);
    double hh = iHigh(_Symbol, InpTF, 2);
    double ll = iLow(_Symbol, InpTF, 2);
    for(int i = 3; i <= bars; i++)
@@ -1167,7 +1167,7 @@ void UpdateChartComment()
    string ladder = StringFormat("L%d", g_ladderStep);
    string skip = (g_lastSkipReason != "" ? "\nskip: " + g_lastSkipReason : "");
    string txt = StringFormat(
-      "ScalpWIN v2.04 | %s\ncap R$%.0f (%s) seed R$%.0f | fees R$%.2f | vol≈%.0f\ndayPnL R$%.0f | spread %d | escada %s | %s%s",
+      "ScalpWIN v2.05 | %s\ncap R$%.0f (%s) seed R$%.0f | fees R$%.2f | vol≈%.0f\ndayPnL R$%.0f | spread %d | escada %s | %s%s",
       _Symbol,
       GetCapital(),
       g_capitalSource,
@@ -1218,18 +1218,20 @@ int OnInit()
                   DayPnLMoney(), DailyLossLimitMoney());
    }
 
-   PrintFormat("ScalpWIN_v2.04 init | %s | capital=R$%.2f (%s) seed=R$%.2f realized=R$%.2f fees=R$%.2f | vol≈%.0f | magic=%I64d",
+   PrintFormat("ScalpWIN_v2.05 init | %s | capital=R$%.2f (%s) seed=R$%.2f realized=R$%.2f fees=R$%.2f | vol≈%.0f | magic=%I64d",
                _Symbol, GetCapital(), g_capitalSource, g_seedCapital, g_realizedAll, g_feesAll,
                CalcVolume(), InpMagic);
+   if(MathAbs(g_seedCapital - 850.0) > 0.5)
+      PrintFormat("ScalpWIN2: AVISO seed=R$%.0f (esperado R$850). Remova o EA do gráfico e arraste de novo sem .set antigo.", g_seedCapital);
    PrintFormat("faixas: R$%.0f+k*R$%.0f | taxa≈R$%.2f/lado (%s) | hist=%s | epoch=%s",
                InpBandStart, InpBandWidth, InpFeePerSide,
                (InpEstimateFees ? "on" : "off"),
                (InpSaveDayHistory ? InpHistoryFile : "off"),
                TimeToString(g_equityEpoch, TIME_DATE|TIME_MINUTES));
    PrintFormat("sessao %02d:%02d-%02d:%02d flat %02d:%02d | break=%d ADX>=%.1f body>=%.2fxATR | volFiltro=%s (x%.2f/%d)",
-               InpStartHour, InpStartMinute, InpEndHour, InpEndMinute,
-               InpFlatHour, InpFlatMinute, InpBreakBars, InpADXMin, InpMinBodyATR,
-               (InpUseVolumeFilter ? "sim" : "nao"), InpMinVolMult, InpVolAvgBars);
+               InpSessStartH, InpSessStartM, InpSessEndH, InpSessEndM,
+               InpFlatH, InpFlatM, InpBreakBarsN, InpAdxMinVal, InpBodyAtrMin,
+               (InpUseVolumeFilter ? "sim" : "nao"), InpVolMinMult, InpVolAvgBars);
    PrintFormat("escada: %.1f%%→fecha %.0f%% | %.1f%%→fecha +%.0f%% | L3=%s | SL ATR=%.2fx teto %.1f%% cap | stopDia=%.1f%%",
                InpLadder1_Pct, InpLadder1_CloseFrac * 100.0,
                InpLadder2_Pct, InpLadder2_CloseFrac * 100.0,
