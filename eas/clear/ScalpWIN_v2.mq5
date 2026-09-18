@@ -1224,7 +1224,7 @@ void UpdateChartComment()
    string ladder = StringFormat("L%d", g_ladderStep);
    string skip = (g_lastSkipReason != "" ? "\nskip: " + g_lastSkipReason : "");
    string txt = StringFormat(
-      "ScalpWIN v2.06 | %s\ncap R$%.0f (%s) seed R$%.0f | fees R$%.2f | vol≈%.0f\ndayPnL R$%.0f | spread %d | escada %s | %s%s",
+      "ScalpWIN v2.07 | %s\ncap R$%.0f (%s) seed R$%.0f | fees R$%.2f | vol≈%.0f\ndayPnL R$%.0f | spread %d | escada %s | %s%s",
       _Symbol,
       GetCapital(),
       g_capitalSource,
@@ -1275,9 +1275,9 @@ int OnInit()
                   DayPnLMoney(), DailyLossLimitMoney());
    }
 
-   PrintFormat("ScalpWIN_v2.06 init | %s | capital=R$%.2f (%s) seed=R$%.2f realized=R$%.2f fees=R$%.2f | vol≈%.0f | magic=%I64d",
+   PrintFormat("ScalpWIN_v2.07 init | %s | capital=R$%.2f (%s) seed=R$%.2f realized=R$%.2f fees=R$%.2f | vol≈%.0f | magic=%I64d | tick=%.0f",
                _Symbol, GetCapital(), g_capitalSource, g_seedCapital, g_realizedAll, g_feesAll,
-               CalcVolume(), InpMagic);
+               CalcVolume(), InpMagic, TickSize());
    if(MathAbs(g_seedCapital - 850.0) > 0.5)
       PrintFormat("ScalpWIN2: AVISO seed=R$%.0f (esperado R$850). Remova o EA do gráfico e arraste de novo sem .set antigo.", g_seedCapital);
    PrintFormat("faixas: R$%.0f+k*R$%.0f | taxa≈R$%.2f/lado (%s) | hist=%s | epoch=%s",
