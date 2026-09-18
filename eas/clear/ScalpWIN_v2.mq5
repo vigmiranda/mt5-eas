@@ -3,10 +3,10 @@
 //| Daytrade WIN (Clear) - rompimento + escada de lucro % + soft lock |
 //| Volume por capital | SL até 5% do capital | stop dia 10%          |
 //| Sem teto de trades/dia | parciais: 2%→50% · 5%→+25% · resto trail |
-//| v2.06: filtros mais folgados (ADX/volume/corpo) p/ mais entradas      |
+//| v2.07: SL/preço alinhados ao tick do WIN (fix invalid stops 10016) |
 //+------------------------------------------------------------------+
 #property copyright "Vitor / mt5-eas"
-#property version   "2.06"
+#property version   "2.07"
 #property strict
 
 #include <Trade/Trade.mqh>
@@ -636,11 +636,40 @@ double MoneyPerPointPerContract()
 }
 
 //+------------------------------------------------------------------+
+double TickSize()
+{
+   double ts = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+   if(ts <= 0.0) ts = _Point;
+   if(ts <= 0.0) ts = 5.0; // WIN mini
+   return ts;
+}
+
+//+------------------------------------------------------------------+
+// mode > 0 = arredonda pra cima (SL de SELL); < 0 = pra baixo (SL de BUY); 0 = nearest
+double SnapToTick(const double price, const int mode = 0)
+{
+   double ts = TickSize();
+   if(ts <= 0.0) return price;
+   double n = price / ts;
+   if(mode > 0) n = MathCeil(n - 1e-8);
+   else if(mode < 0) n = MathFloor(n + 1e-8);
+   else n = MathRound(n);
+   int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
+   return NormalizeDouble(n * ts, digits);
+}
+
+//+------------------------------------------------------------------+
 double ClampSLPoints(const double pts)
 {
    double out = pts;
    if(out < InpMinSL_Points) out = InpMinSL_Points;
    if(out > InpMaxSL_Points) out = InpMaxSL_Points;
+   // Alinha distância ao tick (WIN = 5 pts)
+   double ts = TickSize();
+   double pt = (_Point > 0.0 ? _Point : 1.0);
+   double tickPts = ts / pt;
+   if(tickPts > 1.0)
+      out = MathCeil(out / tickPts) * tickPts;
    return out;
 }
 
@@ -668,17 +697,31 @@ bool NormalizeSL(const long type, const double price, double &sl)
 {
    if(sl <= 0.0 || price <= 0.0 || _Point <= 0.0)
       return false;
-   double minDist = MinStopDistancePoints() * _Point;
-   if(type == POSITION_TYPE_BUY || type == ORDER_TYPE_BUY)
+
+   double ts = TickSize();
+   // Distância mínima: stops/freeze level, pelo menos 1 tick
+   double minDist = MathMax(MinStopDistancePoints() * _Point, ts);
+   // Folga extra de 1 tick — Clear/exchange às vezes rejeita no limite
+   minDist += ts;
+
+   bool isBuy = (type == POSITION_TYPE_BUY || type == ORDER_TYPE_BUY);
+   if(isBuy)
    {
-      if(price - sl < minDist) sl = price - minDist;
+      if(price - sl < minDist)
+         sl = price - minDist;
+      sl = SnapToTick(sl, -1); // para baixo, longe do preço
+      if(price - sl < minDist)
+         sl = SnapToTick(price - minDist, -1);
    }
    else
    {
-      if(sl - price < minDist) sl = price + minDist;
+      if(sl - price < minDist)
+         sl = price + minDist;
+      sl = SnapToTick(sl, +1); // para cima, longe do preço
+      if(sl - price < minDist)
+         sl = SnapToTick(price + minDist, +1);
    }
-   sl = NormalizeDouble(sl, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS));
-   return true;
+   return (sl > 0.0);
 }
 
 //+------------------------------------------------------------------+
@@ -828,6 +871,7 @@ bool OpenTrade(const int dir)
       return false;
    }
 
+   // Validação de stops no exchange usa o lado oposto da cotação
    double sl = 0.0;
    trade.SetExpertMagicNumber(InpMagic);
    trade.SetDeviationInPoints(InpSlippagePoints);
@@ -836,15 +880,29 @@ bool OpenTrade(const int dir)
    bool ok = false;
    if(dir > 0)
    {
-      sl = ask - slDist * _Point;
-      NormalizeSL(ORDER_TYPE_BUY, ask, sl);
-      ok = trade.Buy(vol, _Symbol, ask, sl, 0.0, InpTradeComment); // sem TP fixo — escada
+      double entry = SnapToTick(ask, 0);
+      sl = entry - slDist * _Point;
+      // BUY: SL abaixo do bid atual
+      NormalizeSL(ORDER_TYPE_BUY, bid, sl);
+      if(bid - sl < TickSize())
+      {
+         PrintFormat("ScalpWIN2: SL BUY inválido bid=%.0f sl=%.0f", bid, sl);
+         return false;
+      }
+      ok = trade.Buy(vol, _Symbol, entry, sl, 0.0, InpTradeComment);
    }
    else
    {
-      sl = bid + slDist * _Point;
-      NormalizeSL(ORDER_TYPE_SELL, bid, sl);
-      ok = trade.Sell(vol, _Symbol, bid, sl, 0.0, InpTradeComment);
+      double entry = SnapToTick(bid, 0);
+      sl = entry + slDist * _Point;
+      // SELL: SL acima do ask atual (Clear valida contra ask)
+      NormalizeSL(ORDER_TYPE_SELL, ask, sl);
+      if(sl - ask < TickSize())
+      {
+         PrintFormat("ScalpWIN2: SL SELL inválido ask=%.0f sl=%.0f", ask, sl);
+         return false;
+      }
+      ok = trade.Sell(vol, _Symbol, entry, sl, 0.0, InpTradeComment);
    }
 
    if(ok)
@@ -853,13 +911,12 @@ bool OpenTrade(const int dir)
       g_posOpenVol = vol;
       g_posOpenPrice = (dir > 0 ? ask : bid);
       double slMoney = slDist * MoneyPerPointPerContract() * vol;
-      PrintFormat("ScalpWIN2: %s vol=%.0f SL_pts=%.0f (~R$%.0f / máx %.1f%% cap) spread=%d | escada %.1f%%→%.0f%% · %.1f%%→%.0f%%",
-                  (dir > 0 ? "BUY" : "SELL"), vol, slDist, slMoney, InpMaxSL_CapitalPct, spread,
-                  InpLadder1_Pct, InpLadder1_CloseFrac * 100.0,
-                  InpLadder2_Pct, InpLadder2_CloseFrac * 100.0);
+      PrintFormat("ScalpWIN2: %s vol=%.0f entry/SL tickOK SL=%.0f SL_pts=%.0f (~R$%.0f) spread=%d",
+                  (dir > 0 ? "BUY" : "SELL"), vol, sl, slDist, slMoney, spread);
    }
    else
-      PrintFormat("ScalpWIN2: falha ordem retcode=%u %s", trade.ResultRetcode(), trade.ResultComment());
+      PrintFormat("ScalpWIN2: falha ordem retcode=%u %s | ask=%.0f bid=%.0f sl=%.0f tick=%.0f",
+                  trade.ResultRetcode(), trade.ResultComment(), ask, bid, sl, TickSize());
 
    return ok;
 }
