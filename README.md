@@ -15,7 +15,7 @@ Automação em **MetaTrader 5** para duas corretoras:
 
 | Ativo | Timeframe | EA | Magic | Versão | Papel |
 |-------|-----------|----|-------|--------|-------|
-| WINV26 / WIN$ | M5 | **ScalpWIN_v2** | 260917 | 2.07 | Daytrade escada % (recomendado) |
+| WINV26 / WIN$ | M5 | **ScalpWIN_v2** | 260917 | 2.08 | Daytrade escada % (recomendado) |
 | WINV26 / WIN$ | M5 | ScalpWIN_v1 | 260916 | 1.02 | Scalp TP/ATR (referência) |
 | WINV26 / WIN$ | M5 | TrendWIN_v1 | 260914 | 1.11 | Tendência (referência) |
 
@@ -28,9 +28,9 @@ Automação em **MetaTrader 5** para duas corretoras:
 - Inputs renomeados no v2.05 para o MT5 **não reaproveitar** valores antigos salvos no gráfico
 - Histórico: `MQL5/Files/ScalpWIN_v2_equity.csv`
 - Escada: **+2% → 50%** · **+5% → +25%** · resto soft lock (1 contrato zera no L1)
-- SL folgado ATR, teto **5%** · stop diário **10%** · sem teto de trades/dia
+- SL folgado ATR, teto **5%** · **STOP DIA 10%** (pode flat) · **META DIA +3%** (só bloqueia novas entradas; posição aberta segue escada/soft lock) · sem teto de trades/dia
 
-Instalação: copie `eas/clear/ScalpWIN_v2.mq5` → `MQL5/Experts/`, compile (F7). **Remova** o EA do gráfico e arraste de novo (não use .set antigo). Remova o EA e arraste de novo. Log: `v2.06`, `seed=R$850`, `ADX>=18`, `volFiltro ... x0.85`.
+Instalação: copie `eas/clear/ScalpWIN_v2.mq5` → `MQL5/Experts/`, compile (F7). **Remova** o EA do gráfico e arraste de novo (não use .set antigo). Log: `v2.08`, `metaDia=3.0%`, `seed=R$850`.
 
 **ScalpWIN_v1** / **TrendWIN_v1**: referências anteriores.
 

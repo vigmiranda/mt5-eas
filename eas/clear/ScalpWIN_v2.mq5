@@ -2,11 +2,12 @@
 //| ScalpWIN_v2.mq5                                                   |
 //| Daytrade WIN (Clear) - rompimento + escada de lucro % + soft lock |
 //| Volume por capital | SL até 5% do capital | stop dia 10%          |
+//| Meta dia +3%: sem novas entradas (posição aberta segue escada)    |
 //| Sem teto de trades/dia | parciais: 2%→50% · 5%→+25% · resto trail |
-//| v2.07: SL/preço alinhados ao tick do WIN (fix invalid stops 10016) |
+//| v2.08: META DIA (lucro diário) separado do STOP DIA (prejuízo)    |
 //+------------------------------------------------------------------+
 #property copyright "Vitor / mt5-eas"
-#property version   "2.07"
+#property version   "2.08"
 #property strict
 
 #include <Trade/Trade.mqh>
@@ -47,7 +48,9 @@ input string InpHistoryFile        = "ScalpWIN_v2_equity.csv";
 
 input group "=== Risco diário ==="
 input double InpDailyLossPercent   = 10.0;    // Para o dia se prejuízo >= X% do capital do dia
-input bool   InpFlatOnDailyLoss    = true;
+input bool   InpFlatOnDailyLoss    = true;    // true = fecha posições no STOP DIA
+input double InpDailyWinPercent    = 3.0;     // META DIA: lucro >= X% do capital do dia
+input bool   InpUseDailyWinMeta    = true;    // true = ao bater meta, não abre mais
 input int    InpMaxPositions       = 1;
 input int    InpMaxSpreadPoints    = 40;
 
@@ -106,8 +109,10 @@ input bool   InpVerboseLog         = true;
 datetime g_dayStart = 0;
 double   g_dayStartEquity = 0.0;
 datetime g_lastBarTime = 0;
-bool     g_dayStopped = false;
+bool     g_dayStopped = false;      // STOP DIA (prejuízo)
+bool     g_dayWinMeta = false;      // META DIA (lucro) — só bloqueia novas entradas
 bool     g_loggedDailyFlat = false;
+bool     g_loggedDailyWin  = false;
 string   g_capitalSource = "n/a";
 string   g_lastSkipReason = "";
 
@@ -390,6 +395,13 @@ double DailyLossLimitMoney()
 }
 
 //+------------------------------------------------------------------+
+double DailyWinTargetMoney()
+{
+   double base = (g_dayStartEquity > 0.0 ? g_dayStartEquity : GetCapital());
+   return base * MathAbs(InpDailyWinPercent) / 100.0;
+}
+
+//+------------------------------------------------------------------+
 double CalcVolume()
 {
    if(InpSizingMode == SIZING_FIXED)
@@ -473,11 +485,13 @@ void ResetDayIfNeeded()
       g_dayStart = day0;
       g_dayStartEquity = GetCapital();
       g_dayStopped = false;
+      g_dayWinMeta = false;
       g_loggedDailyFlat = false;
+      g_loggedDailyWin = false;
       g_lastSkipReason = "";
-      PrintFormat("ScalpWIN2: novo dia | capital=R$%.2f (%s) seed=R$%.2f realized=R$%.2f | vol≈%.0f | faixa %.0f+%.0fn | stopDia=R$%.2f",
+      PrintFormat("ScalpWIN2: novo dia | capital=R$%.2f (%s) seed=R$%.2f realized=R$%.2f | vol≈%.0f | faixa %.0f+%.0fn | stopDia=R$%.2f | metaDia=R$%.2f",
                   g_dayStartEquity, g_capitalSource, g_seedCapital, g_realizedAll,
-                  CalcVolume(), InpBandStart, InpBandWidth, DailyLossLimitMoney());
+                  CalcVolume(), InpBandStart, InpBandWidth, DailyLossLimitMoney(), DailyWinTargetMoney());
    }
 }
 
@@ -559,6 +573,15 @@ bool DailyLossHit()
    double limit = DailyLossLimitMoney();
    if(limit <= 0.0) return false;
    return (DayPnLMoney() <= -limit);
+}
+
+//+------------------------------------------------------------------+
+bool DailyWinHit()
+{
+   if(!InpUseDailyWinMeta) return false;
+   double target = DailyWinTargetMoney();
+   if(target <= 0.0) return false;
+   return (DayPnLMoney() >= target);
 }
 
 //+------------------------------------------------------------------+
@@ -1219,12 +1242,20 @@ void CloseAllOurs(const string reason)
 //+------------------------------------------------------------------+
 void UpdateChartComment()
 {
-   string status = g_dayStopped ? "STOP DIA 10% (sem entradas)"
-                  : (SessionOpen(TimeTradeServer()) ? "SESSÃO" : "FORA");
+   string status;
+   if(g_dayStopped)
+      status = StringFormat("STOP DIA %.0f%% (sem entradas)", InpDailyLossPercent);
+   else if(g_dayWinMeta)
+      status = StringFormat("META DIA %.0f%%", InpDailyWinPercent);
+   else if(SessionOpen(TimeTradeServer()))
+      status = "SESSÃO";
+   else
+      status = "FORA";
+
    string ladder = StringFormat("L%d", g_ladderStep);
    string skip = (g_lastSkipReason != "" ? "\nskip: " + g_lastSkipReason : "");
    string txt = StringFormat(
-      "ScalpWIN v2.07 | %s\ncap R$%.0f (%s) seed R$%.0f | fees R$%.2f | vol≈%.0f\ndayPnL R$%.0f | spread %d | escada %s | %s%s",
+      "ScalpWIN v2.08 | %s\ncap R$%.0f (%s) seed R$%.0f | fees R$%.2f | vol≈%.0f\ndayPnL R$%.0f | meta R$%.0f | spread %d | escada %s | %s%s",
       _Symbol,
       GetCapital(),
       g_capitalSource,
@@ -1232,6 +1263,7 @@ void UpdateChartComment()
       g_feesAll,
       CalcVolume(),
       DayPnLMoney(),
+      DailyWinTargetMoney(),
       CurrentSpreadPoints(),
       ladder,
       status,
@@ -1274,8 +1306,14 @@ int OnInit()
       PrintFormat("ScalpWIN2: STOP DIA já ativo | dayPnL=R$%.2f | limite=R$%.2f",
                   DayPnLMoney(), DailyLossLimitMoney());
    }
+   else if(DailyWinHit())
+   {
+      g_dayWinMeta = true;
+      PrintFormat("ScalpWIN2: META DIA já ativa | dayPnL=R$%.2f | meta=R$%.2f (%.1f%%) → sem novas entradas",
+                  DayPnLMoney(), DailyWinTargetMoney(), InpDailyWinPercent);
+   }
 
-   PrintFormat("ScalpWIN_v2.07 init | %s | capital=R$%.2f (%s) seed=R$%.2f realized=R$%.2f fees=R$%.2f | vol≈%.0f | magic=%I64d | tick=%.0f",
+   PrintFormat("ScalpWIN_v2.08 init | %s | capital=R$%.2f (%s) seed=R$%.2f realized=R$%.2f fees=R$%.2f | vol≈%.0f | magic=%I64d | tick=%.0f",
                _Symbol, GetCapital(), g_capitalSource, g_seedCapital, g_realizedAll, g_feesAll,
                CalcVolume(), InpMagic, TickSize());
    if(MathAbs(g_seedCapital - 850.0) > 0.5)
@@ -1289,12 +1327,13 @@ int OnInit()
                InpSessStartH, InpSessStartM, InpSessEndH, InpSessEndM,
                InpFlatH, InpFlatM, InpBreakN, InpAdxGate, InpBodyMin,
                (InpUseVolumeFilter ? "sim" : "nao"), InpVolGate, InpVolAvgBars);
-   PrintFormat("escada: %.1f%%→fecha %.0f%% | %.1f%%→fecha +%.0f%% | L3=%s | SL ATR=%.2fx teto %.1f%% cap | stopDia=%.1f%%",
+   PrintFormat("escada: %.1f%%→fecha %.0f%% | %.1f%%→fecha +%.0f%% | L3=%s | SL ATR=%.2fx teto %.1f%% cap | stopDia=%.1f%% | metaDia=%.1f%% (%s)",
                InpLadder1_Pct, InpLadder1_CloseFrac * 100.0,
                InpLadder2_Pct, InpLadder2_CloseFrac * 100.0,
                (InpUseLadder3 ? "sim" : "nao/softlock"),
-               InpSL_ATR_Mult, InpMaxSL_CapitalPct, InpDailyLossPercent);
-   PrintFormat("sem teto de trades/dia | softLock arm=%.2fxATR trail=%.2fxATR",
+               InpSL_ATR_Mult, InpMaxSL_CapitalPct, InpDailyLossPercent,
+               InpDailyWinPercent, (InpUseDailyWinMeta ? "on" : "off"));
+   PrintFormat("sem teto de trades/dia | softLock arm=%.2fxATR trail=%.2fxATR | metaDia=só bloqueia entradas (escada segue)",
                InpSoftStart_ATR, InpTrail_ATR);
    UpdateChartComment();
    return INIT_SUCCEEDED;
@@ -1334,17 +1373,31 @@ void OnTick()
       return;
    }
 
+   // STOP DIA (prejuízo): opcionalmente flat; sempre sem novas entradas
    if(DailyLossHit() || g_dayStopped)
    {
       g_dayStopped = true;
       if(!g_loggedDailyFlat)
       {
-         PrintFormat("ScalpWIN2: STOP DIÁRIO 10%% | dayPnL=R$%.2f | limite=R$%.2f | base=R$%.2f → sem novas entradas",
-                     DayPnLMoney(), DailyLossLimitMoney(), g_dayStartEquity);
+         PrintFormat("ScalpWIN2: STOP DIÁRIO %.1f%% | dayPnL=R$%.2f | limite=R$%.2f | base=R$%.2f → sem novas entradas",
+                     InpDailyLossPercent, DayPnLMoney(), DailyLossLimitMoney(), g_dayStartEquity);
          g_loggedDailyFlat = true;
       }
       if(InpFlatOnDailyLoss && CountOurPositions() > 0)
          CloseAllOurs("daily_loss");
+      return;
+   }
+
+   // META DIA (lucro): NÃO fecha posição — escada/soft lock continua acima
+   if(DailyWinHit() || g_dayWinMeta)
+   {
+      g_dayWinMeta = true;
+      if(!g_loggedDailyWin)
+      {
+         PrintFormat("ScalpWIN2: META DIA %.1f%% | dayPnL=R$%.2f | meta=R$%.2f | base=R$%.2f → sem novas entradas (posição aberta segue)",
+                     InpDailyWinPercent, DayPnLMoney(), DailyWinTargetMoney(), g_dayStartEquity);
+         g_loggedDailyWin = true;
+      }
       return;
    }
 
