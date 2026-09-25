@@ -1,13 +1,12 @@
 //+------------------------------------------------------------------+
 //| ScalpUSDJPY_v3.mq5                                               |
-//| Nomo - daytrade USDJPY | port da lógica ScalpWIN v2.08           |
+//| Nomo - daytrade USDJPY | port ScalpWIN + filtros mais duros      |
 //| Rompimento M5 + EMA/ADX + escada % + soft lock                   |
-//| META DIA +3% (só bloqueia entradas) | STOP DIA 10% (pode flat)   |
-//| Sessão Londres/NY | flat antes do swap | só seg–sex              |
-//| v3.01: log a cada barra + filtro dia útil (seg–sex)              |
+//| META DIA +3% | STOP DIA | só seg–sex | overlap Londres–NY        |
+//| v3.02: menos entradas (ADX/corpo/break↑, sessão 12–17, max/dia)  |
 //+------------------------------------------------------------------+
 #property copyright "Vitor / mt5-eas"
-#property version   "3.01"
+#property version   "3.02"
 #property strict
 
 #include <Trade/Trade.mqh>
@@ -21,69 +20,71 @@ enum ENUM_SIZING
 };
 
 //------------------------ Inputs ------------------------------------
+// Nomes novos no v3.02 → MT5 não reaproveita defaults frouxos do v3.00/3.01
 input group "=== Volume / risco ==="
 input ENUM_SIZING InpSizingMode     = SIZING_RISK_PCT;
-input double InpRiskPercent         = 0.50;   // Risco por trade (% saldo)
+input double InpRiskPct             = 0.30;   // Risco por trade (% saldo) — mais conservador
 input double InpFixedLots           = 0.01;
-input double InpMaxLots             = 0.50;
+input double InpMaxLots             = 0.30;
 input double InpMinLots             = 0.01;
 
 input group "=== Risco diário ==="
-input double InpDailyLossPercent    = 10.0;   // STOP DIA: prejuízo >= X% do capital do dia
-input bool   InpFlatOnDailyLoss     = true;   // true = fecha posições no STOP DIA
-input double InpDailyWinPercent     = 3.0;    // META DIA: lucro >= X% do capital do dia
-input bool   InpUseDailyWinMeta     = true;   // true = ao bater meta, não abre mais
+input double InpDailyLossPercent    = 5.0;    // STOP DIA mais curto no FX (era 10)
+input bool   InpFlatOnDailyLoss     = true;
+input double InpDailyWinPercent     = 3.0;    // META DIA
+input bool   InpUseDailyWinMeta     = true;
 input int    InpMaxPositions        = 1;
-input int    InpMaxSpreadPoints     = 35;     // USDJPY Nomo: spread baixo
+input int    InpMaxTradesDay        = 4;      // Teto de entradas/dia (0 = sem teto)
+input int    InpSpreadMax           = 25;     // Spread máximo (pts)
 
-input group "=== Sessão (horário do servidor Nomo) ==="
-input bool   InpWeekdaysOnly        = true;   // true = só segunda a sexta
-input int    InpSessStartH          = 8;      // ~Londres
-input int    InpSessStartM          = 0;
-input int    InpSessEndH            = 17;     // ~NY tarde
-input int    InpSessEndM            = 0;
-input int    InpFlatH               = 20;     // Flat antes do swap
+input group "=== Sessão (servidor Nomo) — overlap Londres/NY ==="
+input bool   InpWeekdaysOnly        = true;   // só segunda a sexta
+input int    InpEntryStartH         = 12;     // Começa mais tarde (evita manhã ruidosa)
+input int    InpEntryStartM         = 0;
+input int    InpEntryEndH           = 17;     // Fim overlap NY
+input int    InpEntryEndM           = 0;
+input int    InpFlatH               = 20;
 input int    InpFlatM               = 50;
 
-input group "=== Entrada (rompimento) — mesmos filtros ScalpWIN ==="
-input int    InpBreakN              = 3;
+input group "=== Entrada (rompimento) — seletivo FX ==="
+input int    InpBrkBars             = 5;      // Janela maior (era 3)
 input int    InpEMAFast             = 50;
 input int    InpEMASlow             = 200;
 input bool   InpUseEmaTrend         = true;
 input int    InpADXPeriod           = 14;
-input double InpAdxGate             = 18.0;
+input double InpAdxMin              = 25.0;   // Mais duro (era 18)
 input bool   InpUseADXFilter        = true;
-input double InpBodyMin             = 0.25;   // Corpo mínimo × ATR
+input double InpBodyAtr             = 0.45;   // Corpo mínimo × ATR (era 0.25)
 input bool   InpUseVolumeFilter     = true;
 input int    InpVolAvgBars          = 20;
-input double InpVolGate             = 0.85;
+input double InpVolMin              = 1.00;   // Volume >= média (era 0.85)
 input ENUM_TIMEFRAMES InpTF         = PERIOD_M5;
 
 input group "=== Stop (ATR, teto em % do capital) ==="
-input double InpSL_ATR_Mult         = 1.50;
+input double InpSlAtr               = 1.80;   // SL mais folgado vs ruído FX
 input int    InpATRPeriod           = 14;
 input double InpMaxSL_CapitalPct    = 5.0;
-input int    InpMinSL_Points        = 50;     // USDJPY (pts do símbolo)
-input int    InpMaxSL_Points        = 500;
+input int    InpMinSL_Points        = 80;
+input int    InpMaxSL_Points        = 600;
 
 input group "=== Escada de lucro (% do capital do dia) ==="
-input double InpLadder1_Pct         = 2.0;    // 1º alvo → fecha 50%
+input double InpLadder1_Pct         = 2.0;
 input double InpLadder1_CloseFrac   = 0.50;
-input double InpLadder2_Pct         = 5.0;    // 2º alvo → fecha +25%
+input double InpLadder2_Pct         = 5.0;
 input double InpLadder2_CloseFrac   = 0.25;
 input double InpLadder3_Pct         = 8.0;
 input double InpLadder3_CloseFrac   = 0.25;
-input bool   InpUseLadder3          = false;  // resto = soft lock
+input bool   InpUseLadder3          = false;
 
 input group "=== Soft lock (runner) ==="
-input double InpSoftStart_ATR       = 0.80;
+input double InpSoftArm             = 1.00;   // Arma mais tarde (era 0.80)
 input double InpSoftLock_ATR        = 0.30;
 input double InpTrail_ATR           = 0.50;
 input double InpSoftTightenAfter1   = 0.85;
 input double InpSoftTightenAfter2   = 0.70;
 
 input group "=== Geral ==="
-input long   InpMagic               = 260831; // novo vs ScalpUSDJPY_v2 (260830)
+input long   InpMagic               = 260831;
 input int    InpSlippagePoints      = 30;
 input string InpTradeComment        = "ScalpUSDJPY_v3";
 input bool   InpVerboseLog          = true;
@@ -97,6 +98,7 @@ bool     g_dayWinMeta = false;
 bool     g_loggedDailyFlat = false;
 bool     g_loggedDailyWin  = false;
 string   g_lastSkipReason = "";
+int      g_tradesToday = 0;
 
 ulong    g_posTicket = 0;
 double   g_posOpenVol = 0.0;
@@ -291,8 +293,9 @@ void ResetDayIfNeeded()
       g_loggedDailyFlat = false;
       g_loggedDailyWin = false;
       g_lastSkipReason = "";
-      PrintFormat("ScalpJPY3: novo dia | capital=%.2f | stopDia=%.2f | metaDia=%.2f",
-                  g_dayStartEquity, DailyLossLimitMoney(), DailyWinTargetMoney());
+      g_tradesToday = 0;
+      PrintFormat("ScalpJPY3: novo dia | capital=%.2f | stopDia=%.2f | metaDia=%.2f | maxTrades=%d",
+                  g_dayStartEquity, DailyLossLimitMoney(), DailyWinTargetMoney(), InpMaxTradesDay);
    }
 }
 
@@ -314,8 +317,8 @@ bool SessionOpen(const datetime now)
    MqlDateTime dt;
    TimeToStruct(now, dt);
    int nowMin = dt.hour * 60 + dt.min;
-   return (nowMin >= InpSessStartH * 60 + InpSessStartM &&
-           nowMin <  InpSessEndH * 60 + InpSessEndM);
+   return (nowMin >= InpEntryStartH * 60 + InpEntryStartM &&
+           nowMin <  InpEntryEndH * 60 + InpEntryEndM);
 }
 
 //+------------------------------------------------------------------+
@@ -414,7 +417,7 @@ double ClampSLPoints(const double pts)
 //+------------------------------------------------------------------+
 double CalcSLPoints(const double lots)
 {
-   double slPts = ClampSLPoints(ATRPointsRaw() * InpSL_ATR_Mult);
+   double slPts = ClampSLPoints(ATRPointsRaw() * InpSlAtr);
 
    double cap = (g_dayStartEquity > 0.0 ? g_dayStartEquity : GetCapital());
    double maxMoney = cap * MathAbs(InpMaxSL_CapitalPct) / 100.0;
@@ -436,7 +439,7 @@ double CalcLots(const double slPts)
 
    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
    if(balance <= 0.0) balance = GetCapital();
-   double moneyRisk = balance * MathAbs(InpRiskPercent) / 100.0;
+   double moneyRisk = balance * MathAbs(InpRiskPct) / 100.0;
    double mpp = MoneyPerPointPerLot();
    if(mpp <= 0.0 || slPts <= 0.0)
       return NormalizeLots(InpMinLots);
@@ -505,9 +508,9 @@ bool VolumeOK(string &why)
    }
 
    double mult = (double)v1 / avg;
-   if(mult < InpVolGate)
+   if(mult < InpVolMin)
    {
-      why = StringFormat("volume fraco %.2fx < %.2fx", mult, InpVolGate);
+      why = StringFormat("volume fraco %.2fx < %.2fx", mult, InpVolMin);
       return false;
    }
    return true;
@@ -523,9 +526,9 @@ bool GetSignal(int &dir)
    if(!Copy1(hADX, 0, adx)) { LogSkip("ADX sem dados"); return false; }
    if(!Copy1(hATR, 0, atr) || atr <= 0.0) { LogSkip("ATR sem dados"); return false; }
 
-   if(InpUseADXFilter && adx < InpAdxGate)
+   if(InpUseADXFilter && adx < InpAdxMin)
    {
-      LogSkip(StringFormat("ADX fraco %.1f < %.1f", adx, InpAdxGate));
+      LogSkip(StringFormat("ADX fraco %.1f < %.1f", adx, InpAdxMin));
       return true;
    }
 
@@ -541,14 +544,14 @@ bool GetSignal(int &dir)
    if(open1 <= 0.0 || close1 <= 0.0) { LogSkip("candle 1 sem OHLC"); return false; }
 
    double body = MathAbs(close1 - open1);
-   double minBody = atr * InpBodyMin;
+   double minBody = atr * InpBodyAtr;
    if(body < minBody)
    {
       LogSkip(StringFormat("corpo fraco %.1f < %.1f pts", body / _Point, minBody / _Point));
       return true;
    }
 
-   int bars = MathMax(2, InpBreakN);
+   int bars = MathMax(2, InpBrkBars);
    double hh = iHigh(_Symbol, InpTF, 2);
    double ll = iLow(_Symbol, InpTF, 2);
    for(int i = 3; i <= bars; i++)
@@ -598,14 +601,14 @@ bool GetSignal(int &dir)
 bool OpenTrade(const int dir)
 {
    int spread = CurrentSpreadPoints();
-   if(InpMaxSpreadPoints > 0 && spread > InpMaxSpreadPoints)
+   if(InpSpreadMax > 0 && spread > InpSpreadMax)
    {
-      LogSkip(StringFormat("spread %d > %d", spread, InpMaxSpreadPoints));
+      LogSkip(StringFormat("spread %d > %d", spread, InpSpreadMax));
       return false;
    }
 
    // Pré-cálculo de SL em pts com lote provisório para sizing
-   double slPtsProbe = ClampSLPoints(ATRPointsRaw() * InpSL_ATR_Mult);
+   double slPtsProbe = ClampSLPoints(ATRPointsRaw() * InpSlAtr);
    double lots = CalcLots(slPtsProbe);
    if(lots < SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN))
    {
@@ -651,10 +654,12 @@ bool OpenTrade(const int dir)
       ResetPosState();
       g_posOpenVol = lots;
       g_posOpenPrice = (dir > 0 ? ask : bid);
+      g_tradesToday++;
       double mpp = MoneyPerPointPerLot();
       double slMoney = (mpp > 0.0 ? mpp * slPts * lots : 0.0);
-      PrintFormat("ScalpJPY3: %s lots=%.2f SL=%.3f SLpts=%.0f (~%.2f) spread=%d",
-                  (dir > 0 ? "BUY" : "SELL"), lots, sl, slPts, slMoney, spread);
+      PrintFormat("ScalpJPY3: %s lots=%.2f SL=%.3f SLpts=%.0f (~%.2f) spread=%d | tradesHoje=%d/%d",
+                  (dir > 0 ? "BUY" : "SELL"), lots, sl, slPts, slMoney, spread,
+                  g_tradesToday, InpMaxTradesDay);
    }
    else
       PrintFormat("ScalpJPY3: falha ordem ret=%u %s | ask=%.3f bid=%.3f sl=%.3f",
@@ -855,7 +860,7 @@ void ManageLadderAndSoftLock()
    tradePct = 100.0 * tradePnL / cap;
 
    double atrPts = ATRPointsRaw();
-   double startPts = atrPts * InpSoftStart_ATR;
+   double startPts = atrPts * InpSoftArm;
    double lockPts  = atrPts * InpSoftLock_ATR;
    double trailPts = atrPts * InpTrail_ATR;
    if(g_ladderStep >= 2)
@@ -947,13 +952,15 @@ void UpdateChartComment()
 
    string skip = (g_lastSkipReason != "" ? "\nskip: " + g_lastSkipReason : "");
    string txt = StringFormat(
-      "ScalpUSDJPY v3.01 | %s\ncap %.0f | dayPnL %.2f | meta %.2f | spread %d | L%d | %s%s",
+      "ScalpUSDJPY v3.02 | %s\ncap %.0f | dayPnL %.2f | meta %.2f | spread %d | L%d | trades %d/%d | %s%s",
       _Symbol,
       GetCapital(),
       DayPnLMoney(),
       DailyWinTargetMoney(),
       CurrentSpreadPoints(),
       g_ladderStep,
+      g_tradesToday,
+      InpMaxTradesDay,
       status,
       skip
    );
@@ -1001,23 +1008,23 @@ int OnInit()
                   DayPnLMoney(), DailyWinTargetMoney());
    }
 
-   PrintFormat("ScalpUSDJPY_v3.01 init | %s | capital=%.2f | magic=%I64d | risk=%.2f%% | maxLots=%.2f",
-               _Symbol, GetCapital(), InpMagic, InpRiskPercent, InpMaxLots);
+   PrintFormat("ScalpUSDJPY_v3.02 init | %s | capital=%.2f | magic=%I64d | risk=%.2f%% | maxLots=%.2f",
+               _Symbol, GetCapital(), InpMagic, InpRiskPct, InpMaxLots);
    PrintFormat("sessao %02d:%02d-%02d:%02d flat %02d:%02d | dias=%s | break=%d ADX>=%.1f body>=%.2fxATR | volFiltro=%s",
-               InpSessStartH, InpSessStartM, InpSessEndH, InpSessEndM,
+               InpEntryStartH, InpEntryStartM, InpEntryEndH, InpEntryEndM,
                InpFlatH, InpFlatM,
                (InpWeekdaysOnly ? "seg-sex" : "todos"),
-               InpBreakN, InpAdxGate, InpBodyMin,
+               InpBrkBars, InpAdxMin, InpBodyAtr,
                (InpUseVolumeFilter ? "sim" : "nao"));
    PrintFormat("escada: %.1f%%→%.0f%% | %.1f%%→+%.0f%% | L3=%s | SL %.2fxATR teto %.1f%% | stopDia=%.1f%% | metaDia=%.1f%% (%s)",
                InpLadder1_Pct, InpLadder1_CloseFrac * 100.0,
                InpLadder2_Pct, InpLadder2_CloseFrac * 100.0,
                (InpUseLadder3 ? "sim" : "nao/softlock"),
-               InpSL_ATR_Mult, InpMaxSL_CapitalPct,
+               InpSlAtr, InpMaxSL_CapitalPct,
                InpDailyLossPercent, InpDailyWinPercent,
                (InpUseDailyWinMeta ? "on" : "off"));
-   PrintFormat("metaDia=só bloqueia entradas | sem teto trades/dia | softLock arm=%.2fxATR | verbose=%s",
-               InpSoftStart_ATR, (InpVerboseLog ? "on" : "off"));
+   PrintFormat("metaDia=só bloqueia entradas | maxTrades/dia=%d | softLock arm=%.2fxATR | verbose=%s | volMin=%.2f | spreadMax=%d",
+               InpMaxTradesDay, InpSoftArm, (InpVerboseLog ? "on" : "off"), InpVolMin, InpSpreadMax);
    PrintFormat("ScalpJPY3: status agora=%s | server=%s | tradeTerminal=%s | tradeMQL=%s",
                SessionStatusText(TimeTradeServer()),
                TimeToString(TimeTradeServer(), TIME_DATE|TIME_MINUTES),
@@ -1116,7 +1123,7 @@ void OnTick()
          LogSkip("fim de semana (só seg-sex)");
       else
          LogSkip(StringFormat("fora da sessão %02d:%02d-%02d:%02d (server %s)",
-                              InpSessStartH, InpSessStartM, InpSessEndH, InpSessEndM,
+                              InpEntryStartH, InpEntryStartM, InpEntryEndH, InpEntryEndM,
                               TimeToString(now, TIME_MINUTES)));
       return;
    }
@@ -1128,6 +1135,12 @@ void OnTick()
    if(CountOurPositions() >= InpMaxPositions)
    {
       LogSkip(StringFormat("posição aberta (%d)", CountOurPositions()));
+      return;
+   }
+
+   if(InpMaxTradesDay > 0 && g_tradesToday >= InpMaxTradesDay)
+   {
+      LogSkip(StringFormat("teto trades/dia %d/%d", g_tradesToday, InpMaxTradesDay));
       return;
    }
 

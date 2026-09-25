@@ -40,19 +40,18 @@ Instalação: copie `eas/clear/ScalpWIN_v2.mq5` → `MQL5/Experts/`, compile (F7
 
 | Par | Timeframe | EA | Magic | Versão | Papel |
 |-----|-----------|----|-------|--------|-------|
-| USDJPY | M5 | **ScalpUSDJPY_v3** | 260831 | 3.01 | Daytrade escada % (port ScalpWIN) |
+| USDJPY | M5 | **ScalpUSDJPY_v3** | 260831 | 3.02 | Daytrade escada % (port ScalpWIN) |
 | EURUSD | M30 | TrendEURUSD_v1 | 260828 | 1.22 | Trend filtrado |
 | USDJPY | M5 | ScalpUSDJPY_v2 | 260830 | 2.01 | Daytrade seletivo (referência) |
 
 **ScalpUSDJPY_v3** (preferido na Nomo)
-- Mesma lógica do **ScalpWIN v2.08**: rompimento M5 + EMA/ADX + escada **+2%→50%** / **+5%→+25%** + soft lock
-- **META DIA +3%** (só bloqueia entradas) · **STOP DIA 10%** (pode flat)
-- Sessão **08:00–17:00** · **só seg–sex** · flat **20:50** (antes do swap) / fim de semana
-- Volume por risco % do saldo (ou lote fixo) · micro-lote 0,01 zera no L1
-- Magic **260831** (não conflita com o v2)
-- v3.01: log a cada barra M5 + aviso se AlgoTrading/props do EA bloquearem
+- Lógica ScalpWIN (escada + META/STOP) com **filtros mais duros no FX** (v3.02)
+- Entrada: rompimento **5** barras · ADX ≥ **25** · corpo ≥ **0,45×ATR** · volume ≥ média
+- Sessão **12:00–17:00** (overlap Londres/NY) · **só seg–sex** · flat **20:50**
+- Máx. **4** trades/dia · risco **0,30%** · STOP DIA **5%** · META DIA **3%** · SL **1,8×ATR**
+- Magic **260831** · inputs renomeados no v3.02 (não reaproveita .set antigo)
 
-Instalação: copie `eas/nomo/ScalpUSDJPY_v3.mq5` → `MQL5/Experts/`, compile (F7). Gráfico **USDJPY M5**. Remova e arraste de novo. Log: `v3.01`, `dias=seg-sex`, `barra M5 … avaliando`.
+Instalação: copie `eas/nomo/ScalpUSDJPY_v3.mq5` → `MQL5/Experts/`, compile (F7). Gráfico **USDJPY M5**. **Remova** e arraste de novo. Log: `v3.02`, `dias=seg-sex`, `ADX>=25.0`, `sessao 12:00-17:00`.
 
 ### Demais EAs Nomo (referência)
 
