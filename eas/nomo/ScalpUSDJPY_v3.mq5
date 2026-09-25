@@ -3,11 +3,11 @@
 //| Nomo - daytrade USDJPY | port da lógica ScalpWIN v2.08           |
 //| Rompimento M5 + EMA/ADX + escada % + soft lock                   |
 //| META DIA +3% (só bloqueia entradas) | STOP DIA 10% (pode flat)   |
-//| Sessão Londres/NY | flat antes do swap | sem teto de trades/dia  |
-//| v3.00: primeiro port ScalpWIN → Nomo FX                          |
+//| Sessão Londres/NY | flat antes do swap | só seg–sex              |
+//| v3.01: log a cada barra + filtro dia útil (seg–sex)              |
 //+------------------------------------------------------------------+
 #property copyright "Vitor / mt5-eas"
-#property version   "3.00"
+#property version   "3.01"
 #property strict
 
 #include <Trade/Trade.mqh>
@@ -37,6 +37,7 @@ input int    InpMaxPositions        = 1;
 input int    InpMaxSpreadPoints     = 35;     // USDJPY Nomo: spread baixo
 
 input group "=== Sessão (horário do servidor Nomo) ==="
+input bool   InpWeekdaysOnly        = true;   // true = só segunda a sexta
 input int    InpSessStartH          = 8;      // ~Londres
 input int    InpSessStartM          = 0;
 input int    InpSessEndH            = 17;     // ~NY tarde
@@ -191,8 +192,7 @@ double GetCapital()
 //+------------------------------------------------------------------+
 void LogSkip(const string reason)
 {
-   if(reason == g_lastSkipReason)
-      return;
+   // Igual ScalpWIN: imprime a cada chamada (cada barra nova) para o Experts não ficar mudo
    g_lastSkipReason = reason;
    if(InpVerboseLog)
       PrintFormat("ScalpJPY3: SKIP | %s", reason);
@@ -297,8 +297,20 @@ void ResetDayIfNeeded()
 }
 
 //+------------------------------------------------------------------+
+bool IsWeekday(const datetime now)
+{
+   MqlDateTime dt;
+   TimeToStruct(now, dt);
+   // 0=domingo … 6=sábado (MqlDateTime.day_of_week)
+   return (dt.day_of_week >= 1 && dt.day_of_week <= 5);
+}
+
+//+------------------------------------------------------------------+
 bool SessionOpen(const datetime now)
 {
+   if(InpWeekdaysOnly && !IsWeekday(now))
+      return false;
+
    MqlDateTime dt;
    TimeToStruct(now, dt);
    int nowMin = dt.hour * 60 + dt.min;
@@ -307,10 +319,23 @@ bool SessionOpen(const datetime now)
 }
 
 //+------------------------------------------------------------------+
+string SessionStatusText(const datetime now)
+{
+   if(InpWeekdaysOnly && !IsWeekday(now))
+      return "FORA FDS";
+   if(SessionOpen(now))
+      return "SESSÃO";
+   return "FORA";
+}
+
+//+------------------------------------------------------------------+
 bool ShouldFlat(const datetime now)
 {
    MqlDateTime dt;
    TimeToStruct(now, dt);
+   // Fim de semana: se ainda houver posição, flat também
+   if(InpWeekdaysOnly && !IsWeekday(now))
+      return true;
    return ((dt.hour * 60 + dt.min) >= InpFlatH * 60 + InpFlatM);
 }
 
@@ -917,14 +942,12 @@ void UpdateChartComment()
       status = StringFormat("STOP DIA %.0f%%", InpDailyLossPercent);
    else if(g_dayWinMeta)
       status = StringFormat("META DIA %.0f%%", InpDailyWinPercent);
-   else if(SessionOpen(TimeTradeServer()))
-      status = "SESSÃO";
    else
-      status = "FORA";
+      status = SessionStatusText(TimeTradeServer());
 
    string skip = (g_lastSkipReason != "" ? "\nskip: " + g_lastSkipReason : "");
    string txt = StringFormat(
-      "ScalpUSDJPY v3.00 | %s\ncap %.0f | dayPnL %.2f | meta %.2f | spread %d | L%d | %s%s",
+      "ScalpUSDJPY v3.01 | %s\ncap %.0f | dayPnL %.2f | meta %.2f | spread %d | L%d | %s%s",
       _Symbol,
       GetCapital(),
       DayPnLMoney(),
@@ -978,11 +1001,13 @@ int OnInit()
                   DayPnLMoney(), DailyWinTargetMoney());
    }
 
-   PrintFormat("ScalpUSDJPY_v3.00 init | %s | capital=%.2f | magic=%I64d | risk=%.2f%% | maxLots=%.2f",
+   PrintFormat("ScalpUSDJPY_v3.01 init | %s | capital=%.2f | magic=%I64d | risk=%.2f%% | maxLots=%.2f",
                _Symbol, GetCapital(), InpMagic, InpRiskPercent, InpMaxLots);
-   PrintFormat("sessao %02d:%02d-%02d:%02d flat %02d:%02d | break=%d ADX>=%.1f body>=%.2fxATR | volFiltro=%s",
+   PrintFormat("sessao %02d:%02d-%02d:%02d flat %02d:%02d | dias=%s | break=%d ADX>=%.1f body>=%.2fxATR | volFiltro=%s",
                InpSessStartH, InpSessStartM, InpSessEndH, InpSessEndM,
-               InpFlatH, InpFlatM, InpBreakN, InpAdxGate, InpBodyMin,
+               InpFlatH, InpFlatM,
+               (InpWeekdaysOnly ? "seg-sex" : "todos"),
+               InpBreakN, InpAdxGate, InpBodyMin,
                (InpUseVolumeFilter ? "sim" : "nao"));
    PrintFormat("escada: %.1f%%→%.0f%% | %.1f%%→+%.0f%% | L3=%s | SL %.2fxATR teto %.1f%% | stopDia=%.1f%% | metaDia=%.1f%% (%s)",
                InpLadder1_Pct, InpLadder1_CloseFrac * 100.0,
@@ -991,8 +1016,13 @@ int OnInit()
                InpSL_ATR_Mult, InpMaxSL_CapitalPct,
                InpDailyLossPercent, InpDailyWinPercent,
                (InpUseDailyWinMeta ? "on" : "off"));
-   PrintFormat("metaDia=só bloqueia entradas | sem teto trades/dia | softLock arm=%.2fxATR",
-               InpSoftStart_ATR);
+   PrintFormat("metaDia=só bloqueia entradas | sem teto trades/dia | softLock arm=%.2fxATR | verbose=%s",
+               InpSoftStart_ATR, (InpVerboseLog ? "on" : "off"));
+   PrintFormat("ScalpJPY3: status agora=%s | server=%s | tradeTerminal=%s | tradeMQL=%s",
+               SessionStatusText(TimeTradeServer()),
+               TimeToString(TimeTradeServer(), TIME_DATE|TIME_MINUTES),
+               (TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) ? "on" : "OFF"),
+               (MQLInfoInteger(MQL_TRADE_ALLOWED) ? "on" : "OFF"));
    UpdateChartComment();
    return INIT_SUCCEEDED;
 }
@@ -1014,12 +1044,29 @@ void OnTick()
    ResetDayIfNeeded();
    UpdateChartComment();
 
-   if(!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED))
-      return;
-   if(!MQLInfoInteger(MQL_TRADE_ALLOWED))
-      return;
-
    datetime now = TimeTradeServer();
+
+   // Esses returns eram SILENCIOSOS — Comment mostrava SESSÃO mas Experts ficava mudo
+   if(!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED))
+   {
+      static datetime lastLogTerm = 0;
+      if(now - lastLogTerm >= 60)
+      {
+         lastLogTerm = now;
+         Print("ScalpJPY3: BLOCK | botão AlgoTrading do terminal OFF");
+      }
+      return;
+   }
+   if(!MQLInfoInteger(MQL_TRADE_ALLOWED))
+   {
+      static datetime lastLogMql = 0;
+      if(now - lastLogMql >= 60)
+      {
+         lastLogMql = now;
+         Print("ScalpJPY3: BLOCK | desmarque/marque 'Permite trading ao vivo' nas propriedades do EA (Aba Comum)");
+      }
+      return;
+   }
 
    // META DIA / STOP DIA: escada continua (exceto se flat forçado no STOP)
    if(CountOurPositions() > 0 && !ShouldFlat(now) && !g_dayStopped)
@@ -1028,7 +1075,7 @@ void OnTick()
    if(ShouldFlat(now))
    {
       if(CountOurPositions() > 0)
-         CloseAllOurs("flat_swap");
+         CloseAllOurs(InpWeekdaysOnly && !IsWeekday(now) ? "flat_weekend" : "flat_swap");
       return;
    }
 
@@ -1058,13 +1105,25 @@ void OnTick()
       return;
    }
 
-   if(!SessionOpen(now))
-      return;
-
    datetime barTime = iTime(_Symbol, InpTF, 1);
    if(barTime == 0 || barTime == g_lastBarTime)
       return;
    g_lastBarTime = barTime;
+
+   if(!SessionOpen(now))
+   {
+      if(InpWeekdaysOnly && !IsWeekday(now))
+         LogSkip("fim de semana (só seg-sex)");
+      else
+         LogSkip(StringFormat("fora da sessão %02d:%02d-%02d:%02d (server %s)",
+                              InpSessStartH, InpSessStartM, InpSessEndH, InpSessEndM,
+                              TimeToString(now, TIME_MINUTES)));
+      return;
+   }
+
+   if(InpVerboseLog)
+      PrintFormat("ScalpJPY3: barra M5 %s | avaliando entrada | spread=%d",
+                  TimeToString(barTime, TIME_DATE|TIME_MINUTES), CurrentSpreadPoints());
 
    if(CountOurPositions() >= InpMaxPositions)
    {
