@@ -40,18 +40,19 @@ Instalação: copie `eas/clear/ScalpWIN_v2.mq5` → `MQL5/Experts/`, compile (F7
 
 | Par | Timeframe | EA | Magic | Versão | Papel |
 |-----|-----------|----|-------|--------|-------|
-| USDJPY | M5 | **ScalpUSDJPY_v3** | 260831 | 3.02 | Daytrade escada % (port ScalpWIN) |
+| USDJPY | M5 | **ScalpUSDJPY_v3** | 260831 | 3.03 | Daytrade escada % (port ScalpWIN) |
 | EURUSD | M30 | TrendEURUSD_v1 | 260828 | 1.22 | Trend filtrado |
 | USDJPY | M5 | ScalpUSDJPY_v2 | 260830 | 2.01 | Daytrade seletivo (referência) |
 
 **ScalpUSDJPY_v3** (preferido na Nomo)
-- Lógica ScalpWIN (escada + META/STOP) com **filtros mais duros no FX** (v3.02)
+- Lógica ScalpWIN (escada + META/STOP) com **filtros mais duros no FX**
 - Entrada: rompimento **5** barras · ADX ≥ **25** · corpo ≥ **0,45×ATR** · volume ≥ média
-- Sessão **12:00–17:00** (overlap Londres/NY) · **só seg–sex** · flat **20:50**
+- Servidor Nomo ≈ **GMT (UTC+0)** = horário de Brasília **+3h**
+- Sessão **13:00–19:00 GMT** (≈ **10:00–16:00 Brasília**) · flat **21:00 GMT** (≈18:00 BRT) · **só seg–sex**
 - Máx. **4** trades/dia · risco **0,30%** · STOP DIA **5%** · META DIA **3%** · SL **1,8×ATR**
-- Magic **260831** · inputs renomeados no v3.02 (não reaproveita .set antigo)
+- Magic **260831**
 
-Instalação: copie `eas/nomo/ScalpUSDJPY_v3.mq5` → `MQL5/Experts/`, compile (F7). Gráfico **USDJPY M5**. **Remova** e arraste de novo. Log: `v3.02`, `dias=seg-sex`, `ADX>=25.0`, `sessao 12:00-17:00`.
+Instalação: copie `eas/nomo/ScalpUSDJPY_v3.mq5` → `MQL5/Experts/`, compile (F7). Gráfico **USDJPY M5**. **Remova** e arraste de novo. Log: `v3.03`, `sessao GMT 13:00-19:00`.
 
 ### Demais EAs Nomo (referência)
 

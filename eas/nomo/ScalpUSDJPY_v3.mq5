@@ -2,11 +2,11 @@
 //| ScalpUSDJPY_v3.mq5                                               |
 //| Nomo - daytrade USDJPY | port ScalpWIN + filtros mais duros      |
 //| Rompimento M5 + EMA/ADX + escada % + soft lock                   |
-//| META DIA +3% | STOP DIA | só seg–sex | overlap Londres–NY        |
-//| v3.02: menos entradas (ADX/corpo/break↑, sessão 12–17, max/dia)  |
+//| META DIA +3% | STOP DIA | só seg–sex | servidor Nomo ≈ GMT       |
+//| v3.03: sessão 13–19 GMT (≈10–16 Brasília) overlap Londres–NY     |
 //+------------------------------------------------------------------+
 #property copyright "Vitor / mt5-eas"
-#property version   "3.02"
+#property version   "3.03"
 #property strict
 
 #include <Trade/Trade.mqh>
@@ -20,7 +20,7 @@ enum ENUM_SIZING
 };
 
 //------------------------ Inputs ------------------------------------
-// Nomes novos no v3.02 → MT5 não reaproveita defaults frouxos do v3.00/3.01
+// Nomes novos no v3.03 (sessão GMT) → remova o EA e arraste de novo
 input group "=== Volume / risco ==="
 input ENUM_SIZING InpSizingMode     = SIZING_RISK_PCT;
 input double InpRiskPct             = 0.30;   // Risco por trade (% saldo) — mais conservador
@@ -37,14 +37,14 @@ input int    InpMaxPositions        = 1;
 input int    InpMaxTradesDay        = 4;      // Teto de entradas/dia (0 = sem teto)
 input int    InpSpreadMax           = 25;     // Spread máximo (pts)
 
-input group "=== Sessão (servidor Nomo) — overlap Londres/NY ==="
+input group "=== Sessão servidor Nomo (GMT / UTC+0 ≈ Brasil+3h) ==="
 input bool   InpWeekdaysOnly        = true;   // só segunda a sexta
-input int    InpEntryStartH         = 12;     // Começa mais tarde (evita manhã ruidosa)
-input int    InpEntryStartM         = 0;
-input int    InpEntryEndH           = 17;     // Fim overlap NY
-input int    InpEntryEndM           = 0;
-input int    InpFlatH               = 20;
-input int    InpFlatM               = 50;
+input int    InpGmtOpenH            = 13;     // 13:00 GMT ≈ 10:00 Brasília
+input int    InpGmtOpenM            = 0;
+input int    InpGmtCloseH           = 19;     // 19:00 GMT ≈ 16:00 Brasília
+input int    InpGmtCloseM           = 0;
+input int    InpGmtFlatH            = 21;     // 21:00 GMT ≈ 18:00 Brasília
+input int    InpGmtFlatM            = 0;
 
 input group "=== Entrada (rompimento) — seletivo FX ==="
 input int    InpBrkBars             = 5;      // Janela maior (era 3)
@@ -317,8 +317,8 @@ bool SessionOpen(const datetime now)
    MqlDateTime dt;
    TimeToStruct(now, dt);
    int nowMin = dt.hour * 60 + dt.min;
-   return (nowMin >= InpEntryStartH * 60 + InpEntryStartM &&
-           nowMin <  InpEntryEndH * 60 + InpEntryEndM);
+   return (nowMin >= InpGmtOpenH * 60 + InpGmtOpenM &&
+           nowMin <  InpGmtCloseH * 60 + InpGmtCloseM);
 }
 
 //+------------------------------------------------------------------+
@@ -339,7 +339,7 @@ bool ShouldFlat(const datetime now)
    // Fim de semana: se ainda houver posição, flat também
    if(InpWeekdaysOnly && !IsWeekday(now))
       return true;
-   return ((dt.hour * 60 + dt.min) >= InpFlatH * 60 + InpFlatM);
+   return ((dt.hour * 60 + dt.min) >= InpGmtFlatH * 60 + InpGmtFlatM);
 }
 
 //+------------------------------------------------------------------+
@@ -952,7 +952,7 @@ void UpdateChartComment()
 
    string skip = (g_lastSkipReason != "" ? "\nskip: " + g_lastSkipReason : "");
    string txt = StringFormat(
-      "ScalpUSDJPY v3.02 | %s\ncap %.0f | dayPnL %.2f | meta %.2f | spread %d | L%d | trades %d/%d | %s%s",
+      "ScalpUSDJPY v3.03 | %s\ncap %.0f | dayPnL %.2f | meta %.2f | spread %d | L%d | trades %d/%d | %s%s",
       _Symbol,
       GetCapital(),
       DayPnLMoney(),
@@ -1008,14 +1008,17 @@ int OnInit()
                   DayPnLMoney(), DailyWinTargetMoney());
    }
 
-   PrintFormat("ScalpUSDJPY_v3.02 init | %s | capital=%.2f | magic=%I64d | risk=%.2f%% | maxLots=%.2f",
+   PrintFormat("ScalpUSDJPY_v3.03 init | %s | capital=%.2f | magic=%I64d | risk=%.2f%% | maxLots=%.2f",
                _Symbol, GetCapital(), InpMagic, InpRiskPct, InpMaxLots);
-   PrintFormat("sessao %02d:%02d-%02d:%02d flat %02d:%02d | dias=%s | break=%d ADX>=%.1f body>=%.2fxATR | volFiltro=%s",
-               InpEntryStartH, InpEntryStartM, InpEntryEndH, InpEntryEndM,
-               InpFlatH, InpFlatM,
+   PrintFormat("sessao GMT %02d:%02d-%02d:%02d (≈ Brasil %02d:%02d-%02d:%02d) flat GMT %02d:%02d | dias=%s | break=%d ADX>=%.1f body>=%.2fxATR | volFiltro=%s",
+               InpGmtOpenH, InpGmtOpenM, InpGmtCloseH, InpGmtCloseM,
+               MathMax(0, InpGmtOpenH - 3), InpGmtOpenM,
+               MathMax(0, InpGmtCloseH - 3), InpGmtCloseM,
+               InpGmtFlatH, InpGmtFlatM,
                (InpWeekdaysOnly ? "seg-sex" : "todos"),
                InpBrkBars, InpAdxMin, InpBodyAtr,
                (InpUseVolumeFilter ? "sim" : "nao"));
+   PrintFormat("ScalpJPY3: fuso Nomo≈GMT (UTC+0) | PC Brasil costuma ser GMT-3 → server = local+3h");
    PrintFormat("escada: %.1f%%→%.0f%% | %.1f%%→+%.0f%% | L3=%s | SL %.2fxATR teto %.1f%% | stopDia=%.1f%% | metaDia=%.1f%% (%s)",
                InpLadder1_Pct, InpLadder1_CloseFrac * 100.0,
                InpLadder2_Pct, InpLadder2_CloseFrac * 100.0,
@@ -1123,7 +1126,7 @@ void OnTick()
          LogSkip("fim de semana (só seg-sex)");
       else
          LogSkip(StringFormat("fora da sessão %02d:%02d-%02d:%02d (server %s)",
-                              InpEntryStartH, InpEntryStartM, InpEntryEndH, InpEntryEndM,
+                              InpGmtOpenH, InpGmtOpenM, InpGmtCloseH, InpGmtCloseM,
                               TimeToString(now, TIME_MINUTES)));
       return;
    }
