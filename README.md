@@ -15,22 +15,24 @@ Automação em **MetaTrader 5** para duas corretoras:
 
 | Ativo | Timeframe | EA | Magic | Versão | Papel |
 |-------|-----------|----|-------|--------|-------|
-| WINV26 / WIN$ | M5 | **ScalpWIN_v2** | 260917 | 2.08 | Daytrade escada % (recomendado) |
+| WINV26 / WIN$ | M5 | **ScalpWIN_v2** | 260917 | 2.09 | Daytrade escada % (recomendado) |
 | WINV26 / WIN$ | M5 | ScalpWIN_v1 | 260916 | 1.02 | Scalp TP/ATR (referência) |
 | WINV26 / WIN$ | M5 | TrendWIN_v1 | 260914 | 1.11 | Tendência (referência) |
 
 **ScalpWIN_v2** (preferido)
 - Rompimento M5 + EMA/ADX (entrada seletiva)
-- **Capital virtual (Clear):** semente **R$850** + PnL novo − taxas (~R$0,25/lado)
+- **Capital virtual (Clear):** semente + PnL novo − taxas (~R$0,25/lado)
 - **Faixas:** R$500–1500 → 1 · R$1500–2500 → 2 · …
 - **Filtros v2.06:** ADX ≥ 18, corpo ≥ 0,25×ATR, rompimento 3 barras, volume ≥ 0,85× média
 - Sessão **10:30–15:45**, flat **16:00**
 - Inputs renomeados no v2.05 para o MT5 **não reaproveitar** valores antigos salvos no gráfico
 - Histórico: `MQL5/Files/ScalpWIN_v2_equity.csv`
 - Escada: **+2% → 50%** · **+5% → +25%** · resto soft lock (1 contrato zera no L1)
-- SL folgado ATR, teto **5%** · **STOP DIA 10%** (pode flat) · **META DIA +3%** (só bloqueia novas entradas; posição aberta segue escada/soft lock) · sem teto de trades/dia
+- SL folgado ATR, teto **5%** · **STOP DIA 10%** (inclui floating; pode flat)
+- **META DIA +3%:** só com conta **flat** e lucro **realizado** (não trava por floating)
+- v2.09: parcial L1/L2 **sem** fallback que zerava tudo (bug ret 10009)
 
-Instalação: copie `eas/clear/ScalpWIN_v2.mq5` → `MQL5/Experts/`, compile (F7). **Remova** o EA do gráfico e arraste de novo (não use .set antigo). Log: `v2.08`, `metaDia=3.0%`, `seed=R$850`.
+Instalação: copie `eas/clear/ScalpWIN_v2.mq5` → `MQL5/Experts/`, compile (F7). **Remova** o EA do gráfico e arraste de novo. Log: `v2.09`, `metaDia=só flat+realizado`.
 
 ### Capital virtual Clear — como funciona
 

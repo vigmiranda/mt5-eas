@@ -2,12 +2,12 @@
 //| ScalpWIN_v2.mq5                                                   |
 //| Daytrade WIN (Clear) - rompimento + escada de lucro % + soft lock |
 //| Volume por capital | SL até 5% do capital | stop dia 10%          |
-//| Meta dia +3%: sem novas entradas (posição aberta segue escada)    |
+//| Meta dia +3%: só com conta flat (lucro realizado)                |
 //| Sem teto de trades/dia | parciais: 2%→50% · 5%→+25% · resto trail |
-//| v2.08: META DIA (lucro diário) separado do STOP DIA (prejuízo)    |
+//| v2.09: parcial 10009 OK + META DIA só realizado/flat             |
 //+------------------------------------------------------------------+
 #property copyright "Vitor / mt5-eas"
-#property version   "2.08"
+#property version   "2.09"
 #property strict
 
 #include <Trade/Trade.mqh>
@@ -49,8 +49,8 @@ input string InpHistoryFile        = "ScalpWIN_v2_equity.csv";
 input group "=== Risco diário ==="
 input double InpDailyLossPercent   = 10.0;    // Para o dia se prejuízo >= X% do capital do dia
 input bool   InpFlatOnDailyLoss    = true;    // true = fecha posições no STOP DIA
-input double InpDailyWinPercent    = 3.0;     // META DIA: lucro >= X% do capital do dia
-input bool   InpUseDailyWinMeta    = true;    // true = ao bater meta, não abre mais
+input double InpDailyWinPercent    = 3.0;     // META DIA: lucro realizado >= X% (só se flat)
+input bool   InpUseDailyWinMeta    = true;    // true = ao bater meta (flat), não abre mais
 input int    InpMaxPositions       = 1;
 input int    InpMaxSpreadPoints    = 40;
 
@@ -534,6 +534,13 @@ void ResetPosState()
 //+------------------------------------------------------------------+
 double DayPnLMoney()
 {
+   // Realizado do dia + floating (usado no STOP DIA / Comment)
+   return DayPnLRealizedMoney() + FloatingPnLOurs();
+}
+
+//+------------------------------------------------------------------+
+double DayPnLRealizedMoney()
+{
    datetime from = g_dayStart;
    datetime to = TimeTradeServer() + 1;
    if(!HistorySelect(from, to))
@@ -554,16 +561,6 @@ double DayPnLMoney()
            + HistoryDealGetDouble(ticket, DEAL_SWAP)
            + HistoryDealGetDouble(ticket, DEAL_COMMISSION);
    }
-
-   for(int i = PositionsTotal() - 1; i >= 0; i--)
-   {
-      ulong ticket = PositionGetTicket(i);
-      if(ticket == 0) continue;
-      if(!PositionSelectByTicket(ticket)) continue;
-      if(PositionGetInteger(POSITION_MAGIC) != InpMagic) continue;
-      if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
-      pnl += PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
-   }
    return pnl;
 }
 
@@ -572,6 +569,7 @@ bool DailyLossHit()
 {
    double limit = DailyLossLimitMoney();
    if(limit <= 0.0) return false;
+   // STOP DIA: inclui floating (corta cedo se a posição estiver afundando)
    return (DayPnLMoney() <= -limit);
 }
 
@@ -581,7 +579,10 @@ bool DailyWinHit()
    if(!InpUseDailyWinMeta) return false;
    double target = DailyWinTargetMoney();
    if(target <= 0.0) return false;
-   return (DayPnLMoney() >= target);
+   // Mais seguro: só META com conta FLAT e lucro JÁ REALIZADO (sem floating)
+   if(CountOurPositions() > 0)
+      return false;
+   return (DayPnLRealizedMoney() >= target);
 }
 
 //+------------------------------------------------------------------+
@@ -956,6 +957,14 @@ double RoundDownVolume(const double v)
 }
 
 //+------------------------------------------------------------------+
+bool TradeRetcodeOk(const uint rc)
+{
+   return (rc == TRADE_RETCODE_DONE ||
+           rc == TRADE_RETCODE_DONE_PARTIAL ||
+           rc == TRADE_RETCODE_PLACED);
+}
+
+//+------------------------------------------------------------------+
 bool CloseVolume(const ulong ticket, const double volClose, const string reason)
 {
    if(volClose <= 0.0) return false;
@@ -976,12 +985,19 @@ bool CloseVolume(const ulong ticket, const double volClose, const string reason)
    {
       if(!trade.PositionClose(ticket))
       {
+         uint rc = trade.ResultRetcode();
+         if(TradeRetcodeOk(rc) || !PositionSelectByTicket(ticket))
+         {
+            PrintFormat("ScalpWIN2: ZEROU %s | vol=%.2f | step=%d (ret=%u)",
+                        reason, posVol, g_ladderStep, rc);
+            return true;
+         }
          datetime now = TimeTradeServer();
          if(now != g_lastCloseFailLog)
          {
             g_lastCloseFailLog = now;
             PrintFormat("ScalpWIN2: CLOSE total falhou %s vol=%.2f ret=%u %s",
-                        reason, posVol, trade.ResultRetcode(), trade.ResultComment());
+                        reason, posVol, rc, trade.ResultComment());
          }
          return false;
       }
@@ -989,22 +1005,43 @@ bool CloseVolume(const ulong ticket, const double volClose, const string reason)
       return true;
    }
 
-   if(!trade.PositionClosePartial(ticket, want))
+   // Parcial: NÃO fazer fallback close total (bug v2.08: ret 10009 DONE virava zerar tudo)
+   bool sent = trade.PositionClosePartial(ticket, want);
+   uint rc = trade.ResultRetcode();
+
+   // Confirma no mercado: volume caiu ou posição sumiu
+   double newVol = posVol;
+   bool stillOpen = PositionSelectByTicket(ticket);
+   if(stillOpen)
+      newVol = PositionGetDouble(POSITION_VOLUME);
+   else
+      newVol = 0.0;
+
+   if(newVol < posVol - 1e-8)
    {
-      datetime now = TimeTradeServer();
-      if(now != g_lastCloseFailLog)
-      {
-         g_lastCloseFailLog = now;
-         PrintFormat("ScalpWIN2: parcial falhou %s vol=%.2f ret=%u %s — tentando close total",
-                     reason, want, trade.ResultRetcode(), trade.ResultComment());
-      }
-      if(!trade.PositionClose(ticket))
-         return false;
-      PrintFormat("ScalpWIN2: ZEROU (fallback) %s | vol=%.2f", reason, posVol);
+      double closed = posVol - newVol;
+      PrintFormat("ScalpWIN2: PARCIAL %s | fechou %.2f de %.2f (resto %.2f) | step=%d | ret=%u%s",
+                  reason, closed, posVol, newVol, g_ladderStep, rc,
+                  (sent ? "" : " (CTrade=false, mercado OK)"));
       return true;
    }
-   PrintFormat("ScalpWIN2: PARCIAL %s | fechou %.2f de %.2f | step=%d", reason, want, posVol, g_ladderStep);
-   return true;
+
+   if(sent || TradeRetcodeOk(rc))
+   {
+      // Broker disse OK mas volume ainda não refletiu — tenta de novo no próximo tick
+      PrintFormat("ScalpWIN2: parcial pendente %s want=%.2f ret=%u %s — sem fallback total",
+                  reason, want, rc, trade.ResultComment());
+      return false;
+   }
+
+   datetime now = TimeTradeServer();
+   if(now != g_lastCloseFailLog)
+   {
+      g_lastCloseFailLog = now;
+      PrintFormat("ScalpWIN2: parcial falhou %s want=%.2f ret=%u %s — SEM zerar (retry depois)",
+                  reason, want, rc, trade.ResultComment());
+   }
+   return false;
 }
 
 //+------------------------------------------------------------------+
@@ -1255,7 +1292,7 @@ void UpdateChartComment()
    string ladder = StringFormat("L%d", g_ladderStep);
    string skip = (g_lastSkipReason != "" ? "\nskip: " + g_lastSkipReason : "");
    string txt = StringFormat(
-      "ScalpWIN v2.08 | %s\ncap R$%.0f (%s) seed R$%.0f | fees R$%.2f | vol≈%.0f\ndayPnL R$%.0f | meta R$%.0f | spread %d | escada %s | %s%s",
+      "ScalpWIN v2.09 | %s\ncap R$%.0f (%s) seed R$%.0f | fees R$%.2f | vol≈%.0f\ndayPnL R$%.0f (real R$%.0f) | meta R$%.0f | spread %d | escada %s | %s%s",
       _Symbol,
       GetCapital(),
       g_capitalSource,
@@ -1263,6 +1300,7 @@ void UpdateChartComment()
       g_feesAll,
       CalcVolume(),
       DayPnLMoney(),
+      DayPnLRealizedMoney(),
       DailyWinTargetMoney(),
       CurrentSpreadPoints(),
       ladder,
@@ -1309,15 +1347,15 @@ int OnInit()
    else if(DailyWinHit())
    {
       g_dayWinMeta = true;
-      PrintFormat("ScalpWIN2: META DIA já ativa | dayPnL=R$%.2f | meta=R$%.2f (%.1f%%) → sem novas entradas",
-                  DayPnLMoney(), DailyWinTargetMoney(), InpDailyWinPercent);
+      PrintFormat("ScalpWIN2: META DIA já ativa | realizado=R$%.2f | meta=R$%.2f (%.1f%%) → sem novas entradas",
+                  DayPnLRealizedMoney(), DailyWinTargetMoney(), InpDailyWinPercent);
    }
 
-   PrintFormat("ScalpWIN_v2.08 init | %s | capital=R$%.2f (%s) seed=R$%.2f realized=R$%.2f fees=R$%.2f | vol≈%.0f | magic=%I64d | tick=%.0f",
+   PrintFormat("ScalpWIN_v2.09 init | %s | capital=R$%.2f (%s) seed=R$%.2f realized=R$%.2f fees=R$%.2f | vol≈%.0f | magic=%I64d | tick=%.0f",
                _Symbol, GetCapital(), g_capitalSource, g_seedCapital, g_realizedAll, g_feesAll,
                CalcVolume(), InpMagic, TickSize());
-   if(MathAbs(g_seedCapital - 850.0) > 0.5)
-      PrintFormat("ScalpWIN2: AVISO seed=R$%.0f (esperado R$850). Remova o EA do gráfico e arraste de novo sem .set antigo.", g_seedCapital);
+   if(MathAbs(g_seedCapital - 850.0) > 0.5 && MathAbs(g_seedCapital - InpSeedBal) > 0.5)
+      PrintFormat("ScalpWIN2: AVISO seed=R$%.0f vs InpSeedBal=R$%.0f. Se aporte, use InpResetVirtualSeed=true uma vez.", g_seedCapital, InpSeedBal);
    PrintFormat("faixas: R$%.0f+k*R$%.0f | taxa≈R$%.2f/lado (%s) | hist=%s | epoch=%s",
                InpBandStart, InpBandWidth, InpFeePerSide,
                (InpEstimateFees ? "on" : "off"),
@@ -1333,7 +1371,7 @@ int OnInit()
                (InpUseLadder3 ? "sim" : "nao/softlock"),
                InpSL_ATR_Mult, InpMaxSL_CapitalPct, InpDailyLossPercent,
                InpDailyWinPercent, (InpUseDailyWinMeta ? "on" : "off"));
-   PrintFormat("sem teto de trades/dia | softLock arm=%.2fxATR trail=%.2fxATR | metaDia=só bloqueia entradas (escada segue)",
+   PrintFormat("metaDia=só flat+realizado | parcial SEM fallback total | softLock arm=%.2fxATR trail=%.2fxATR",
                InpSoftStart_ATR, InpTrail_ATR);
    UpdateChartComment();
    return INIT_SUCCEEDED;
@@ -1388,14 +1426,14 @@ void OnTick()
       return;
    }
 
-   // META DIA (lucro): NÃO fecha posição — escada/soft lock continua acima
-   if(DailyWinHit() || g_dayWinMeta)
+   // META DIA: só com flat + lucro realizado (não trava por floating)
+   if(g_dayWinMeta || DailyWinHit())
    {
       g_dayWinMeta = true;
       if(!g_loggedDailyWin)
       {
-         PrintFormat("ScalpWIN2: META DIA %.1f%% | dayPnL=R$%.2f | meta=R$%.2f | base=R$%.2f → sem novas entradas (posição aberta segue)",
-                     InpDailyWinPercent, DayPnLMoney(), DailyWinTargetMoney(), g_dayStartEquity);
+         PrintFormat("ScalpWIN2: META DIA %.1f%% | realizado=R$%.2f | meta=R$%.2f | base=R$%.2f → sem novas entradas (flat+realizado)",
+                     InpDailyWinPercent, DayPnLRealizedMoney(), DailyWinTargetMoney(), g_dayStartEquity);
          g_loggedDailyWin = true;
       }
       return;
