@@ -70,22 +70,21 @@ O reset também reinicia a “época”: o PnL antigo deixa de ser somado (já e
 
 | Par | Timeframe | EA | Magic | Versão | Papel |
 |-----|-----------|----|-------|--------|-------|
-| XAUUSD | **M15** | **ScalpXAUUSD_v1** | 320930 | 1.00 | Daytrade ouro escada % (recomendado) |
+| XAUUSD | **M15** | **ScalpXAUUSD_v1** | 320930 | 1.01 | Daytrade ouro escada % (recomendado) |
 | EURUSD | M30 | TrendEURUSD_v1 | 260828 | 1.22 | Trend filtrado |
 | USDJPY | M5 | ScalpUSDJPY_v3 | 260831 | 3.03 | Pausado / referência |
 
 **ScalpXAUUSD_v1** (preferido na Nomo)
-- DNA **ScalpWIN**: rompimento + EMA/ADX + escada **+2%→50%** / **+5%→+25%** + soft lock
+- DNA **ScalpWIN**: rompimento + ADX + escada **+2%→50%** / **+5%→+25%** + soft lock
 - **Sem grid / martingale** — máx. **1 posição**, sem reforço de perda
 - **META DIA +3%** só com conta **flat** + lucro **realizado** · **STOP DIA 5%** (com floating)
-- Timeframe recomendado: **M15** (M5 = ruído; H1 = poucas ops no daytrade)
+- Timeframe recomendado: **M15**
 - Sessão **13:00–19:00 GMT** (≈10–16 Brasília) · flat **21:00 GMT** · **só seg–sex**
+- **Filtros v1.01 (afrouxados):** EMA filtro **off** · ADX ≥ **18** · corpo ≥ **0,30×ATR** · break **3** · vol ≥ **0,85×**
 - Risco **0,25%**/trade · máx. **3** trades/dia · SL **1,6×ATR** · maxLots **0,10**
 - Magic **320930**
 
-Instalação: copie `eas/nomo/ScalpXAUUSD_v1.mq5` → `MQL5/Experts/`, compile (F7). Gráfico **XAUUSD M15**. Remova USDJPY do gráfico (ou desative AlgoTrading nele). Log: `v1.00`, `TF=PERIOD_M15`, `metaDia=só flat+realizado`.
-
-**Por que M15?** Ouro no M5 gera muitos falsos rompimentos (como o USDJPY sofreu); H1 é lento demais para daytrade com flat 21:00 GMT. M15 equilibra sinal e frequência.
+Instalação: copie `eas/nomo/ScalpXAUUSD_v1.mq5` → `MQL5/Experts/`, compile (F7). Gráfico **XAUUSD M15**. **Remova** e arraste de novo (inputs renomeados no v1.01). Log: `v1.01`, `EMA=off`, `ADX>=18.0`.
 
 ### Demais EAs Nomo (referência)
 
