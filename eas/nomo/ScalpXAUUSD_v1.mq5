@@ -1,0 +1,1214 @@
+//+------------------------------------------------------------------+
+//| ScalpXAUUSD_v1.mq5                                               |
+//| Nomo - daytrade XAUUSD | DNA ScalpWIN (sem grid/martingale)      |
+//| Rompimento M15 + EMA/ADX + escada % + soft lock                  |
+//| META DIA só flat+realizado | STOP DIA com floating | 1 posição   |
+//| v1.00: primeiro EA ouro Nomo (defaults seletivos)                |
+//+------------------------------------------------------------------+
+#property copyright "Vitor / mt5-eas"
+#property version   "1.00"
+#property strict
+
+#include <Trade/Trade.mqh>
+
+CTrade trade;
+
+int CountOurPositions();
+bool SelectOurPosition(ulong &ticket, long &type, double &vol, double &open, double &sl, double &profit);
+
+enum ENUM_SIZING
+{
+   SIZING_RISK_PCT = 0,  // Lote pelo risco % do saldo vs SL
+   SIZING_FIXED    = 1   // Lote fixo
+};
+
+//------------------------ Inputs ------------------------------------
+// Sem grid/martingale: 1 posição, sem reforço de perda
+input group "=== Volume / risco ==="
+input ENUM_SIZING InpSizingMode     = SIZING_RISK_PCT;
+input double InpRiskPct             = 0.25;   // Risco por trade (% saldo) — ouro: conservador
+input double InpFixedLots           = 0.01;
+input double InpMaxLots             = 0.10;   // Teto duro (ouro move muito)
+input double InpMinLots             = 0.01;
+
+input group "=== Risco diário ==="
+input double InpDailyLossPercent    = 5.0;    // STOP DIA (inclui floating)
+input bool   InpFlatOnDailyLoss     = true;
+input double InpDailyWinPercent     = 3.0;    // META DIA (só flat + realizado)
+input bool   InpUseDailyWinMeta     = true;
+input int    InpMaxPositions        = 1;      // FIXO 1 — sem grid/martingale
+input int    InpMaxTradesDay        = 3;      // Ouro: poucas entradas/dia
+input int    InpSpreadMax           = 600;    // Spread máximo (pts do símbolo; Nomo ~200-500 típico)
+
+input group "=== Sessão servidor Nomo (GMT ≈ Brasil+3h) — overlap ouro ==="
+input bool   InpWeekdaysOnly        = true;   // só segunda a sexta
+input int    InpGmtOpenH            = 13;     // 13:00 GMT ≈ 10:00 Brasília
+input int    InpGmtOpenM            = 0;
+input int    InpGmtCloseH           = 19;     // 19:00 GMT ≈ 16:00 Brasília
+input int    InpGmtCloseM           = 0;
+input int    InpGmtFlatH            = 21;     // 21:00 GMT ≈ 18:00 Brasília
+input int    InpGmtFlatM            = 0;
+
+input group "=== Entrada (rompimento) — seletivo XAU ==="
+input int    InpBrkBars             = 4;      // Rompimento M15
+input int    InpEMAFast             = 50;
+input int    InpEMASlow             = 200;
+input bool   InpUseEmaTrend         = true;
+input int    InpADXPeriod           = 14;
+input double InpAdxMin              = 22.0;   // Tendência mínima no ouro
+input bool   InpUseADXFilter        = true;
+input double InpBodyAtr             = 0.40;   // Corpo mínimo × ATR
+input bool   InpUseVolumeFilter     = true;
+input int    InpVolAvgBars          = 20;
+input double InpVolMin              = 1.00;   // Volume >= média (era 0.85)
+input ENUM_TIMEFRAMES InpTF         = PERIOD_M15; // Recomendado: M15 (M5=ruído, H1=poucas ops)
+
+input group "=== Stop (ATR, teto em % do capital) ==="
+input double InpSlAtr               = 1.60;   // SL ATR (ouro: folga sem exagero)
+input int    InpATRPeriod           = 14;
+input double InpMaxSL_CapitalPct    = 5.0;
+input int    InpMinSL_Points        = 150;    // Distância mínima SL (pts)
+input int    InpMaxSL_Points        = 5000;   // Teto pts (ouro usa pontos pequenos)
+
+input group "=== Escada de lucro (% do capital do dia) ==="
+input double InpLadder1_Pct         = 2.0;
+input double InpLadder1_CloseFrac   = 0.50;
+input double InpLadder2_Pct         = 5.0;
+input double InpLadder2_CloseFrac   = 0.25;
+input double InpLadder3_Pct         = 8.0;
+input double InpLadder3_CloseFrac   = 0.25;
+input bool   InpUseLadder3          = false;
+
+input group "=== Soft lock (runner) ==="
+input double InpSoftArm             = 1.00;   // Arma soft lock após X ATR
+input double InpSoftLock_ATR        = 0.30;
+input double InpTrail_ATR           = 0.50;
+input double InpSoftTightenAfter1   = 0.85;
+input double InpSoftTightenAfter2   = 0.70;
+
+input group "=== Geral ==="
+input long   InpMagic               = 320930; // Único XAU
+input int    InpSlippagePoints      = 80;     // Ouro: slippage maior
+input string InpTradeComment        = "ScalpXAUUSD_v1";
+input bool   InpVerboseLog          = true;
+
+//------------------------ Estado ------------------------------------
+datetime g_dayStart = 0;
+double   g_dayStartEquity = 0.0;
+datetime g_lastBarTime = 0;
+bool     g_dayStopped = false;
+bool     g_dayWinMeta = false;
+bool     g_loggedDailyFlat = false;
+bool     g_loggedDailyWin  = false;
+string   g_lastSkipReason = "";
+int      g_tradesToday = 0;
+
+ulong    g_posTicket = 0;
+double   g_posOpenVol = 0.0;
+double   g_posOpenPrice = 0.0;
+int      g_ladderStep = 0;
+double   g_realizedThisTrade = 0.0;
+datetime g_lastCloseFailLog = 0;
+
+int hEMA50  = INVALID_HANDLE;
+int hEMA200 = INVALID_HANDLE;
+int hADX    = INVALID_HANDLE;
+int hATR    = INVALID_HANDLE;
+int hVol    = INVALID_HANDLE;
+
+//+------------------------------------------------------------------+
+double NormalizeLots(double lots)
+{
+   double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   double maxLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
+   double step   = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+   if(step <= 0.0) step = 0.01;
+   if(minLot <= 0.0) minLot = 0.01;
+   lots = MathFloor(lots / step + 1e-12) * step;
+   lots = MathMax(InpMinLots, MathMin(InpMaxLots, lots));
+   lots = MathMax(minLot, MathMin(maxLot, lots));
+   return NormalizeDouble(lots, 2);
+}
+
+//+------------------------------------------------------------------+
+double RoundDownVolume(const double v)
+{
+   double step = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+   double vmin = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   if(step <= 0.0) step = 0.01;
+   double out = MathFloor(v / step + 1e-12) * step;
+   if(out < vmin) out = 0.0;
+   return out;
+}
+
+//+------------------------------------------------------------------+
+int CurrentSpreadPoints()
+{
+   long spr = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
+   if(spr > 0) return (int)spr;
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   if(ask <= 0.0 || bid <= 0.0 || _Point <= 0.0) return 999999;
+   return (int)MathRound((ask - bid) / _Point);
+}
+
+//+------------------------------------------------------------------+
+int MinStopDistancePoints()
+{
+   int stops = (int)SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
+   int freeze = (int)SymbolInfoInteger(_Symbol, SYMBOL_TRADE_FREEZE_LEVEL);
+   int need = MathMax(stops, freeze);
+   if(need < 1) need = 1;
+   return need;
+}
+
+//+------------------------------------------------------------------+
+double TickSize()
+{
+   double ts = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+   if(ts <= 0.0) ts = _Point;
+   if(ts <= 0.0) ts = 0.001;
+   return ts;
+}
+
+//+------------------------------------------------------------------+
+double SnapPrice(const double price)
+{
+   int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
+   return NormalizeDouble(price, digits);
+}
+
+//+------------------------------------------------------------------+
+double MoneyPerPointPerLot()
+{
+   double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+   double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+   if(tickSize <= 0.0 || tickValue <= 0.0 || _Point <= 0.0)
+      return 0.0;
+   return (tickValue / tickSize) * _Point;
+}
+
+//+------------------------------------------------------------------+
+double GetCapital()
+{
+   return MathMax(AccountInfoDouble(ACCOUNT_EQUITY), AccountInfoDouble(ACCOUNT_BALANCE));
+}
+
+//+------------------------------------------------------------------+
+void LogSkip(const string reason)
+{
+   // Igual ScalpWIN: imprime a cada chamada (cada barra nova) para o Experts não ficar mudo
+   g_lastSkipReason = reason;
+   if(InpVerboseLog)
+      PrintFormat("ScalpXAU: SKIP | %s", reason);
+}
+
+//+------------------------------------------------------------------+
+double DailyLossLimitMoney()
+{
+   double base = (g_dayStartEquity > 0.0 ? g_dayStartEquity : GetCapital());
+   return base * MathAbs(InpDailyLossPercent) / 100.0;
+}
+
+//+------------------------------------------------------------------+
+double DailyWinTargetMoney()
+{
+   double base = (g_dayStartEquity > 0.0 ? g_dayStartEquity : GetCapital());
+   return base * MathAbs(InpDailyWinPercent) / 100.0;
+}
+
+//+------------------------------------------------------------------+
+double FloatingPnLOurs()
+{
+   double pnl = 0.0;
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0) continue;
+      if(!PositionSelectByTicket(ticket)) continue;
+      if(PositionGetInteger(POSITION_MAGIC) != InpMagic) continue;
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+      pnl += PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
+   }
+   return pnl;
+}
+
+//+------------------------------------------------------------------+
+double DayPnLRealizedMoney()
+{
+   datetime from = g_dayStart;
+   datetime to = TimeTradeServer() + 1;
+   if(!HistorySelect(from, to))
+      return 0.0;
+
+   double pnl = 0.0;
+   int total = HistoryDealsTotal();
+   for(int i = 0; i < total; i++)
+   {
+      ulong ticket = HistoryDealGetTicket(i);
+      if(ticket == 0) continue;
+      if((long)HistoryDealGetInteger(ticket, DEAL_MAGIC) != InpMagic) continue;
+      if(HistoryDealGetString(ticket, DEAL_SYMBOL) != _Symbol) continue;
+      long entry = HistoryDealGetInteger(ticket, DEAL_ENTRY);
+      if(entry != DEAL_ENTRY_OUT && entry != DEAL_ENTRY_INOUT && entry != DEAL_ENTRY_OUT_BY)
+         continue;
+      pnl += HistoryDealGetDouble(ticket, DEAL_PROFIT)
+           + HistoryDealGetDouble(ticket, DEAL_SWAP)
+           + HistoryDealGetDouble(ticket, DEAL_COMMISSION);
+   }
+   return pnl;
+}
+
+//+------------------------------------------------------------------+
+double DayPnLMoney()
+{
+   // STOP DIA / Comment: realizado + floating
+   return DayPnLRealizedMoney() + FloatingPnLOurs();
+}
+
+//+------------------------------------------------------------------+
+bool DailyLossHit()
+{
+   double limit = DailyLossLimitMoney();
+   if(limit <= 0.0) return false;
+   return (DayPnLMoney() <= -limit);
+}
+
+//+------------------------------------------------------------------+
+bool DailyWinHit()
+{
+   if(!InpUseDailyWinMeta) return false;
+   double target = DailyWinTargetMoney();
+   if(target <= 0.0) return false;
+   // Mais seguro: META só com conta FLAT e lucro REALIZADO (sem floating)
+   if(CountOurPositions() > 0)
+      return false;
+   return (DayPnLRealizedMoney() >= target);
+}
+
+//+------------------------------------------------------------------+
+void ResetPosState()
+{
+   g_posTicket = 0;
+   g_posOpenVol = 0.0;
+   g_posOpenPrice = 0.0;
+   g_ladderStep = 0;
+   g_realizedThisTrade = 0.0;
+}
+
+//+------------------------------------------------------------------+
+void ResetDayIfNeeded()
+{
+   datetime now = TimeTradeServer();
+   MqlDateTime dt;
+   TimeToStruct(now, dt);
+   datetime day0 = StringToTime(StringFormat("%04d.%02d.%02d 00:00", dt.year, dt.mon, dt.day));
+   if(day0 != g_dayStart)
+   {
+      g_dayStart = day0;
+      g_dayStartEquity = GetCapital();
+      g_dayStopped = false;
+      g_dayWinMeta = false;
+      g_loggedDailyFlat = false;
+      g_loggedDailyWin = false;
+      g_lastSkipReason = "";
+      g_tradesToday = 0;
+      PrintFormat("ScalpXAU: novo dia | capital=%.2f | stopDia=%.2f | metaDia=%.2f | maxTrades=%d",
+                  g_dayStartEquity, DailyLossLimitMoney(), DailyWinTargetMoney(), InpMaxTradesDay);
+   }
+}
+
+//+------------------------------------------------------------------+
+bool IsWeekday(const datetime now)
+{
+   MqlDateTime dt;
+   TimeToStruct(now, dt);
+   // 0=domingo … 6=sábado (MqlDateTime.day_of_week)
+   return (dt.day_of_week >= 1 && dt.day_of_week <= 5);
+}
+
+//+------------------------------------------------------------------+
+bool SessionOpen(const datetime now)
+{
+   if(InpWeekdaysOnly && !IsWeekday(now))
+      return false;
+
+   MqlDateTime dt;
+   TimeToStruct(now, dt);
+   int nowMin = dt.hour * 60 + dt.min;
+   return (nowMin >= InpGmtOpenH * 60 + InpGmtOpenM &&
+           nowMin <  InpGmtCloseH * 60 + InpGmtCloseM);
+}
+
+//+------------------------------------------------------------------+
+string SessionStatusText(const datetime now)
+{
+   if(InpWeekdaysOnly && !IsWeekday(now))
+      return "FORA FDS";
+   if(SessionOpen(now))
+      return "SESSÃO";
+   return "FORA";
+}
+
+//+------------------------------------------------------------------+
+bool ShouldFlat(const datetime now)
+{
+   MqlDateTime dt;
+   TimeToStruct(now, dt);
+   // Fim de semana: se ainda houver posição, flat também
+   if(InpWeekdaysOnly && !IsWeekday(now))
+      return true;
+   return ((dt.hour * 60 + dt.min) >= InpGmtFlatH * 60 + InpGmtFlatM);
+}
+
+//+------------------------------------------------------------------+
+int CountOurPositions()
+{
+   int n = 0;
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0) continue;
+      if(!PositionSelectByTicket(ticket)) continue;
+      if(PositionGetInteger(POSITION_MAGIC) != InpMagic) continue;
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+      n++;
+   }
+   return n;
+}
+
+//+------------------------------------------------------------------+
+bool SelectOurPosition(ulong &ticket, long &type, double &vol, double &open, double &sl, double &profit)
+{
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ticket = PositionGetTicket(i);
+      if(ticket == 0) continue;
+      if(!PositionSelectByTicket(ticket)) continue;
+      if(PositionGetInteger(POSITION_MAGIC) != InpMagic) continue;
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+      type = PositionGetInteger(POSITION_TYPE);
+      vol = PositionGetDouble(POSITION_VOLUME);
+      open = PositionGetDouble(POSITION_PRICE_OPEN);
+      sl = PositionGetDouble(POSITION_SL);
+      profit = PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
+      return true;
+   }
+   return false;
+}
+
+//+------------------------------------------------------------------+
+bool Copy1(const int handle, const int buffer, double &out)
+{
+   double a[];
+   if(CopyBuffer(handle, buffer, 1, 1, a) != 1)
+      return false;
+   out = a[0];
+   return true;
+}
+
+//+------------------------------------------------------------------+
+double ATRPrice()
+{
+   double atr = 0.0;
+   if(!Copy1(hATR, 0, atr) || atr <= 0.0)
+      return InpMinSL_Points * _Point;
+   return atr;
+}
+
+//+------------------------------------------------------------------+
+double ATRPointsRaw()
+{
+   double pt = _Point;
+   if(pt <= 0.0) pt = 0.001;
+   return ATRPrice() / pt;
+}
+
+//+------------------------------------------------------------------+
+double ClampSLPoints(const double pts)
+{
+   double out = pts;
+   if(out < InpMinSL_Points) out = InpMinSL_Points;
+   if(out > InpMaxSL_Points) out = InpMaxSL_Points;
+   return out;
+}
+
+//+------------------------------------------------------------------+
+double CalcSLPoints(const double lots)
+{
+   double slPts = ClampSLPoints(ATRPointsRaw() * InpSlAtr);
+
+   double cap = (g_dayStartEquity > 0.0 ? g_dayStartEquity : GetCapital());
+   double maxMoney = cap * MathAbs(InpMaxSL_CapitalPct) / 100.0;
+   double mpp = MoneyPerPointPerLot();
+   if(mpp > 0.0 && lots > 0.0 && maxMoney > 0.0)
+   {
+      double maxPts = maxMoney / (mpp * lots);
+      if(maxPts > 0.0 && slPts > maxPts)
+         slPts = maxPts;
+   }
+   return ClampSLPoints(slPts);
+}
+
+//+------------------------------------------------------------------+
+double CalcLots(const double slPts)
+{
+   if(InpSizingMode == SIZING_FIXED)
+      return NormalizeLots(InpFixedLots);
+
+   double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+   if(balance <= 0.0) balance = GetCapital();
+   double moneyRisk = balance * MathAbs(InpRiskPct) / 100.0;
+   double mpp = MoneyPerPointPerLot();
+   if(mpp <= 0.0 || slPts <= 0.0)
+      return NormalizeLots(InpMinLots);
+
+   double lossPerLot = mpp * slPts;
+   if(lossPerLot <= 0.0)
+      return NormalizeLots(InpMinLots);
+
+   return NormalizeLots(MathMin(moneyRisk / lossPerLot, InpMaxLots));
+}
+
+//+------------------------------------------------------------------+
+bool NormalizeSL(const long type, const double price, double &sl)
+{
+   if(sl <= 0.0 || price <= 0.0 || _Point <= 0.0)
+      return false;
+
+   double minDist = MathMax(MinStopDistancePoints() * _Point, TickSize());
+   minDist += TickSize();
+
+   bool isBuy = (type == POSITION_TYPE_BUY || type == ORDER_TYPE_BUY);
+   if(isBuy)
+   {
+      if(price - sl < minDist)
+         sl = price - minDist;
+      sl = SnapPrice(sl);
+      if(price - sl < minDist)
+         sl = SnapPrice(price - minDist);
+   }
+   else
+   {
+      if(sl - price < minDist)
+         sl = price + minDist;
+      sl = SnapPrice(sl);
+      if(sl - price < minDist)
+         sl = SnapPrice(price + minDist);
+   }
+   return (sl > 0.0);
+}
+
+//+------------------------------------------------------------------+
+bool VolumeOK(string &why)
+{
+   why = "";
+   if(!InpUseVolumeFilter)
+      return true;
+
+   int need = MathMax(InpVolAvgBars + 2, 5);
+   long vols[];
+   ArraySetAsSeries(vols, true);
+   if(CopyTickVolume(_Symbol, InpTF, 1, need, vols) < need)
+   {
+      why = "volume sem dados";
+      return false;
+   }
+
+   long v1 = vols[0];
+   double sum = 0.0;
+   for(int i = 1; i <= InpVolAvgBars; i++)
+      sum += (double)vols[i];
+   double avg = sum / InpVolAvgBars;
+   if(avg <= 0.0)
+   {
+      why = "média volume zerada";
+      return false;
+   }
+
+   double mult = (double)v1 / avg;
+   if(mult < InpVolMin)
+   {
+      why = StringFormat("volume fraco %.2fx < %.2fx", mult, InpVolMin);
+      return false;
+   }
+   return true;
+}
+
+//+------------------------------------------------------------------+
+bool GetSignal(int &dir)
+{
+   dir = 0;
+   double ema50, ema200, adx, atr;
+   if(!Copy1(hEMA50, 0, ema50)) { LogSkip("EMA50 sem dados"); return false; }
+   if(!Copy1(hEMA200, 0, ema200)) { LogSkip("EMA200 sem dados"); return false; }
+   if(!Copy1(hADX, 0, adx)) { LogSkip("ADX sem dados"); return false; }
+   if(!Copy1(hATR, 0, atr) || atr <= 0.0) { LogSkip("ATR sem dados"); return false; }
+
+   if(InpUseADXFilter && adx < InpAdxMin)
+   {
+      LogSkip(StringFormat("ADX fraco %.1f < %.1f", adx, InpAdxMin));
+      return true;
+   }
+
+   string volWhy = "";
+   if(!VolumeOK(volWhy))
+   {
+      LogSkip(volWhy);
+      return true;
+   }
+
+   double open1 = iOpen(_Symbol, InpTF, 1);
+   double close1 = iClose(_Symbol, InpTF, 1);
+   if(open1 <= 0.0 || close1 <= 0.0) { LogSkip("candle 1 sem OHLC"); return false; }
+
+   double body = MathAbs(close1 - open1);
+   double minBody = atr * InpBodyAtr;
+   if(body < minBody)
+   {
+      LogSkip(StringFormat("corpo fraco %.1f < %.1f pts", body / _Point, minBody / _Point));
+      return true;
+   }
+
+   int bars = MathMax(2, InpBrkBars);
+   double hh = iHigh(_Symbol, InpTF, 2);
+   double ll = iLow(_Symbol, InpTF, 2);
+   for(int i = 3; i <= bars; i++)
+   {
+      hh = MathMax(hh, iHigh(_Symbol, InpTF, i));
+      ll = MathMin(ll, iLow(_Symbol, InpTF, i));
+   }
+
+   bool bull = (close1 > open1);
+   bool bear = (close1 < open1);
+   bool upTrend = (ema50 > ema200);
+   bool downTrend = (ema50 < ema200);
+
+   if(bull && close1 > hh)
+   {
+      if(InpUseEmaTrend && !upTrend)
+      {
+         LogSkip("rompimento alta mas EMA contra");
+         return true;
+      }
+      dir = 1;
+      g_lastSkipReason = "";
+      if(InpVerboseLog)
+         PrintFormat("ScalpXAU: SINAL BUY | close=%.3f > hh=%.3f | ADX=%.1f", close1, hh, adx);
+      return true;
+   }
+
+   if(bear && close1 < ll)
+   {
+      if(InpUseEmaTrend && !downTrend)
+      {
+         LogSkip("rompimento baixa mas EMA contra");
+         return true;
+      }
+      dir = -1;
+      g_lastSkipReason = "";
+      if(InpVerboseLog)
+         PrintFormat("ScalpXAU: SINAL SELL | close=%.3f < ll=%.3f | ADX=%.1f", close1, ll, adx);
+      return true;
+   }
+
+   LogSkip(StringFormat("sem rompimento close=%.3f hh=%.3f ll=%.3f ADX=%.1f", close1, hh, ll, adx));
+   return true;
+}
+
+//+------------------------------------------------------------------+
+bool OpenTrade(const int dir)
+{
+   int spread = CurrentSpreadPoints();
+   if(InpSpreadMax > 0 && spread > InpSpreadMax)
+   {
+      LogSkip(StringFormat("spread %d > %d", spread, InpSpreadMax));
+      return false;
+   }
+
+   // Pré-cálculo de SL em pts com lote provisório para sizing
+   double slPtsProbe = ClampSLPoints(ATRPointsRaw() * InpSlAtr);
+   double lots = CalcLots(slPtsProbe);
+   if(lots < SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN))
+   {
+      LogSkip(StringFormat("lote insuficiente (cap=%.2f)", GetCapital()));
+      return false;
+   }
+
+   double slPts = CalcSLPoints(lots);
+   // Recalcula lote com SL final (teto % capital pode apertar)
+   lots = CalcLots(slPts);
+
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   if(ask <= 0.0 || bid <= 0.0)
+   {
+      Print("ScalpXAU: sem cotação");
+      return false;
+   }
+
+   trade.SetExpertMagicNumber(InpMagic);
+   trade.SetDeviationInPoints(InpSlippagePoints);
+   trade.SetTypeFillingBySymbol(_Symbol);
+
+   bool ok = false;
+   double sl = 0.0;
+   if(dir > 0)
+   {
+      double entry = SnapPrice(ask);
+      sl = entry - slPts * _Point;
+      NormalizeSL(ORDER_TYPE_BUY, bid, sl);
+      ok = trade.Buy(lots, _Symbol, entry, sl, 0.0, InpTradeComment);
+   }
+   else
+   {
+      double entry = SnapPrice(bid);
+      sl = entry + slPts * _Point;
+      NormalizeSL(ORDER_TYPE_SELL, ask, sl);
+      ok = trade.Sell(lots, _Symbol, entry, sl, 0.0, InpTradeComment);
+   }
+
+   if(ok)
+   {
+      ResetPosState();
+      g_posOpenVol = lots;
+      g_posOpenPrice = (dir > 0 ? ask : bid);
+      g_tradesToday++;
+      double mpp = MoneyPerPointPerLot();
+      double slMoney = (mpp > 0.0 ? mpp * slPts * lots : 0.0);
+      PrintFormat("ScalpXAU: %s lots=%.2f SL=%.3f SLpts=%.0f (~%.2f) spread=%d | tradesHoje=%d/%d",
+                  (dir > 0 ? "BUY" : "SELL"), lots, sl, slPts, slMoney, spread,
+                  g_tradesToday, InpMaxTradesDay);
+   }
+   else
+      PrintFormat("ScalpXAU: falha ordem ret=%u %s | ask=%.3f bid=%.3f sl=%.3f",
+                  trade.ResultRetcode(), trade.ResultComment(), ask, bid, sl);
+
+   return ok;
+}
+
+//+------------------------------------------------------------------+
+bool TradeRetcodeOk(const uint rc)
+{
+   return (rc == TRADE_RETCODE_DONE ||
+           rc == TRADE_RETCODE_DONE_PARTIAL ||
+           rc == TRADE_RETCODE_PLACED);
+}
+
+//+------------------------------------------------------------------+
+bool CloseVolume(const ulong ticket, const double volClose, const string reason)
+{
+   if(volClose <= 0.0) return false;
+   if(!PositionSelectByTicket(ticket))
+      return false;
+
+   double posVol = PositionGetDouble(POSITION_VOLUME);
+   double vmin = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   double want = RoundDownVolume(volClose);
+   if(want < vmin) return false;
+
+   trade.SetExpertMagicNumber(InpMagic);
+   trade.SetDeviationInPoints(InpSlippagePoints);
+   trade.SetTypeFillingBySymbol(_Symbol);
+
+   if(want >= posVol - 1e-8)
+   {
+      if(!trade.PositionClose(ticket))
+      {
+         uint rc = trade.ResultRetcode();
+         if(TradeRetcodeOk(rc) || !PositionSelectByTicket(ticket))
+         {
+            PrintFormat("ScalpXAU: ZEROU %s | vol=%.2f | step=%d (ret=%u)",
+                        reason, posVol, g_ladderStep, rc);
+            return true;
+         }
+         datetime now = TimeTradeServer();
+         if(now != g_lastCloseFailLog)
+         {
+            g_lastCloseFailLog = now;
+            PrintFormat("ScalpXAU: CLOSE total falhou %s vol=%.2f ret=%u %s",
+                        reason, posVol, rc, trade.ResultComment());
+         }
+         return false;
+      }
+      PrintFormat("ScalpXAU: ZEROU %s | vol=%.2f | step=%d", reason, posVol, g_ladderStep);
+      return true;
+   }
+
+   // Parcial: SEM fallback close total (mesmo bug ScalpWIN 10009)
+   bool sent = trade.PositionClosePartial(ticket, want);
+   uint rc = trade.ResultRetcode();
+   double newVol = posVol;
+   bool stillOpen = PositionSelectByTicket(ticket);
+   if(stillOpen)
+      newVol = PositionGetDouble(POSITION_VOLUME);
+   else
+      newVol = 0.0;
+
+   if(newVol < posVol - 1e-8)
+   {
+      PrintFormat("ScalpXAU: PARCIAL %s | fechou %.2f de %.2f (resto %.2f) | step=%d | ret=%u",
+                  reason, posVol - newVol, posVol, newVol, g_ladderStep, rc);
+      return true;
+   }
+
+   if(sent || TradeRetcodeOk(rc))
+   {
+      PrintFormat("ScalpXAU: parcial pendente %s want=%.2f ret=%u — sem fallback total",
+                  reason, want, rc);
+      return false;
+   }
+
+   datetime now = TimeTradeServer();
+   if(now != g_lastCloseFailLog)
+   {
+      g_lastCloseFailLog = now;
+      PrintFormat("ScalpXAU: parcial falhou %s want=%.2f ret=%u %s — SEM zerar",
+                  reason, want, rc, trade.ResultComment());
+   }
+   return false;
+}
+
+//+------------------------------------------------------------------+
+double TradeProfitMoney(const double floating)
+{
+   return floating + g_realizedThisTrade;
+}
+
+//+------------------------------------------------------------------+
+void SyncPosStateFromMarket()
+{
+   ulong ticket; long type; double vol, open, sl, profit;
+   if(!SelectOurPosition(ticket, type, vol, open, sl, profit))
+   {
+      if(g_posTicket != 0 || g_posOpenVol > 0.0)
+         ResetPosState();
+      return;
+   }
+
+   if(g_posTicket == 0 || g_posTicket != ticket)
+   {
+      g_posTicket = ticket;
+      if(g_posOpenVol <= 0.0)
+         g_posOpenVol = vol;
+      g_posOpenPrice = open;
+   }
+}
+
+//+------------------------------------------------------------------+
+void ManageLadderAndSoftLock()
+{
+   SyncPosStateFromMarket();
+
+   ulong ticket; long type; double vol, open, sl, profit;
+   if(!SelectOurPosition(ticket, type, vol, open, sl, profit))
+      return;
+
+   g_posTicket = ticket;
+   if(g_posOpenVol <= 0.0)
+      g_posOpenVol = vol;
+
+   double cap = (g_dayStartEquity > 0.0 ? g_dayStartEquity : GetCapital());
+   if(cap <= 0.0) return;
+
+   double tradePnL = TradeProfitMoney(profit);
+   double tradePct = 100.0 * tradePnL / cap;
+   double vmin = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+
+   // Micro-lote (~0.01): não dá para parcial útil → zera no L1 (igual 1 contrato WIN)
+   bool microLot = (g_posOpenVol < 2.0 * vmin - 1e-8);
+
+   if(g_ladderStep < 1 && tradePct >= InpLadder1_Pct)
+   {
+      double want = RoundDownVolume(g_posOpenVol * InpLadder1_CloseFrac);
+      if(microLot)
+         want = vol;
+      want = MathMin(want, vol);
+      if(want >= vmin - 1e-8)
+      {
+         double before = profit;
+         if(CloseVolume(ticket, want, StringFormat("L1 %.1f%% cap (pnl %.2f)", InpLadder1_Pct, tradePnL)))
+         {
+            g_ladderStep = 1;
+            if(vol > 0.0)
+               g_realizedThisTrade += before * (want / vol);
+            if(!SelectOurPosition(ticket, type, vol, open, sl, profit))
+            {
+               ResetPosState();
+               return;
+            }
+         }
+      }
+   }
+
+   if(!SelectOurPosition(ticket, type, vol, open, sl, profit))
+      return;
+
+   tradePnL = TradeProfitMoney(profit);
+   tradePct = 100.0 * tradePnL / cap;
+
+   if(g_ladderStep == 1 && tradePct >= InpLadder2_Pct)
+   {
+      double want = RoundDownVolume(g_posOpenVol * InpLadder2_CloseFrac);
+      if(want <= 0.0 && vol > 0.0)
+         want = RoundDownVolume(vol * 0.5);
+      want = MathMin(want, vol);
+      double remain = vol - want;
+      if(remain > 0.0 && remain < vmin)
+         want = vol;
+
+      if(want >= vmin - 1e-8)
+      {
+         double before = profit;
+         if(CloseVolume(ticket, want, StringFormat("L2 %.1f%% cap (pnl %.2f)", InpLadder2_Pct, tradePnL)))
+         {
+            g_ladderStep = 2;
+            if(vol > 0.0)
+               g_realizedThisTrade += before * (want / vol);
+            if(!SelectOurPosition(ticket, type, vol, open, sl, profit))
+            {
+               ResetPosState();
+               return;
+            }
+         }
+      }
+   }
+
+   if(!SelectOurPosition(ticket, type, vol, open, sl, profit))
+      return;
+
+   tradePnL = TradeProfitMoney(profit);
+   tradePct = 100.0 * tradePnL / cap;
+
+   if(InpUseLadder3 && g_ladderStep == 2 && tradePct >= InpLadder3_Pct)
+   {
+      if(CloseVolume(ticket, vol, StringFormat("L3 %.1f%% cap", InpLadder3_Pct)))
+      {
+         g_ladderStep = 3;
+         ResetPosState();
+         return;
+      }
+   }
+
+   if(!SelectOurPosition(ticket, type, vol, open, sl, profit))
+      return;
+
+   if(g_ladderStep < 1 && tradePct >= InpLadder2_Pct)
+   {
+      PrintFormat("ScalpXAU: SAFETY close | trade %.1f%% >= L2 e escada L0", tradePct);
+      if(CloseVolume(ticket, vol, "SAFETY L2"))
+      {
+         ResetPosState();
+         return;
+      }
+   }
+
+   if(!SelectOurPosition(ticket, type, vol, open, sl, profit))
+      return;
+
+   tradePnL = TradeProfitMoney(profit);
+   tradePct = 100.0 * tradePnL / cap;
+
+   double atrPts = ATRPointsRaw();
+   double startPts = atrPts * InpSoftArm;
+   double lockPts  = atrPts * InpSoftLock_ATR;
+   double trailPts = atrPts * InpTrail_ATR;
+   if(g_ladderStep >= 2)
+   {
+      trailPts *= InpSoftTightenAfter2;
+      lockPts  *= InpSoftTightenAfter2;
+      startPts *= InpSoftTightenAfter2;
+   }
+   else if(g_ladderStep >= 1)
+   {
+      trailPts *= InpSoftTightenAfter1;
+      lockPts  *= InpSoftTightenAfter1;
+      startPts *= InpSoftTightenAfter1;
+   }
+
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double newSL = sl;
+
+   if(type == POSITION_TYPE_BUY)
+   {
+      double profitPts = (bid - open) / _Point;
+      if(profitPts >= startPts)
+      {
+         double lockSL = open + lockPts * _Point;
+         double trailSL = bid - trailPts * _Point;
+         newSL = MathMax(lockSL, trailSL);
+         if(sl > 0.0) newSL = MathMax(newSL, sl);
+         if(g_ladderStep >= 1)
+            newSL = MathMax(newSL, open + MinStopDistancePoints() * _Point);
+         NormalizeSL(POSITION_TYPE_BUY, bid, newSL);
+      }
+   }
+   else
+   {
+      double profitPts = (open - ask) / _Point;
+      if(profitPts >= startPts)
+      {
+         double lockSL = open - lockPts * _Point;
+         double trailSL = ask + trailPts * _Point;
+         newSL = MathMin(lockSL, trailSL);
+         if(sl > 0.0) newSL = MathMin(newSL, sl);
+         if(g_ladderStep >= 1)
+            newSL = MathMin(newSL, open - MinStopDistancePoints() * _Point);
+         NormalizeSL(POSITION_TYPE_SELL, ask, newSL);
+      }
+   }
+
+   if(newSL > 0.0 && MathAbs(newSL - sl) >= _Point)
+   {
+      trade.SetExpertMagicNumber(InpMagic);
+      trade.SetDeviationInPoints(InpSlippagePoints);
+      trade.SetTypeFillingBySymbol(_Symbol);
+      if(!trade.PositionModify(ticket, newSL, 0.0))
+         PrintFormat("ScalpXAU: softlock falhou ret=%u %s", trade.ResultRetcode(), trade.ResultComment());
+      else if(InpVerboseLog)
+         PrintFormat("ScalpXAU: SOFT+ SL %.3f -> %.3f | L%d | pnl=%.2f (%.1f%%)",
+                     sl, newSL, g_ladderStep, tradePnL, tradePct);
+   }
+}
+
+//+------------------------------------------------------------------+
+void CloseAllOurs(const string reason)
+{
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0) continue;
+      if(!PositionSelectByTicket(ticket)) continue;
+      if(PositionGetInteger(POSITION_MAGIC) != InpMagic) continue;
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+      if(!trade.PositionClose(ticket) && InpVerboseLog)
+         PrintFormat("ScalpXAU: close falhou ticket=%I64u ret=%u (%s)",
+                     ticket, trade.ResultRetcode(), reason);
+   }
+   ResetPosState();
+}
+
+//+------------------------------------------------------------------+
+void UpdateChartComment()
+{
+   string status;
+   if(g_dayStopped)
+      status = StringFormat("STOP DIA %.0f%%", InpDailyLossPercent);
+   else if(g_dayWinMeta)
+      status = StringFormat("META DIA %.0f%%", InpDailyWinPercent);
+   else
+      status = SessionStatusText(TimeTradeServer());
+
+   string skip = (g_lastSkipReason != "" ? "\nskip: " + g_lastSkipReason : "");
+   string txt = StringFormat(
+      "ScalpXAUUSD v1.00 | %s | TF %s\ncap %.0f | dayPnL %.2f (real %.2f) | meta %.2f\nspread %d | L%d | trades %d/%d | 1pos | %s%s",
+      _Symbol,
+      EnumToString(InpTF),
+      GetCapital(),
+      DayPnLMoney(),
+      DayPnLRealizedMoney(),
+      DailyWinTargetMoney(),
+      CurrentSpreadPoints(),
+      g_ladderStep,
+      g_tradesToday,
+      InpMaxTradesDay,
+      status,
+      skip
+   );
+   Comment(txt);
+}
+
+//+------------------------------------------------------------------+
+int OnInit()
+{
+   string s = _Symbol;
+   StringToUpper(s);
+   if(StringFind(s, "XAU") < 0 && StringFind(s, "GOLD") < 0)
+      Print("ScalpXAU: aviso - símbolo não parece XAUUSD/GOLD: ", _Symbol);
+
+   if(InpMaxPositions != 1)
+      Print("ScalpXAU: AVISO InpMaxPositions!=1 — forçando comportamento de 1 posição (sem grid)");
+
+   trade.SetExpertMagicNumber(InpMagic);
+   trade.SetDeviationInPoints(InpSlippagePoints);
+
+   hEMA50  = iMA(_Symbol, InpTF, InpEMAFast, 0, MODE_EMA, PRICE_CLOSE);
+   hEMA200 = iMA(_Symbol, InpTF, InpEMASlow, 0, MODE_EMA, PRICE_CLOSE);
+   hADX    = iADX(_Symbol, InpTF, InpADXPeriod);
+   hATR    = iATR(_Symbol, InpTF, InpATRPeriod);
+   hVol    = iVolumes(_Symbol, InpTF, VOLUME_TICK);
+
+   if(hEMA50 == INVALID_HANDLE || hEMA200 == INVALID_HANDLE ||
+      hADX == INVALID_HANDLE || hATR == INVALID_HANDLE ||
+      (InpUseVolumeFilter && hVol == INVALID_HANDLE))
+   {
+      Print("ScalpXAU: falha indicadores");
+      return INIT_FAILED;
+   }
+
+   ResetDayIfNeeded();
+   SyncPosStateFromMarket();
+
+   if(DailyLossHit())
+   {
+      g_dayStopped = true;
+      PrintFormat("ScalpXAU: STOP DIA já ativo | dayPnL=%.2f | limite=%.2f",
+                  DayPnLMoney(), DailyLossLimitMoney());
+   }
+   else if(DailyWinHit())
+   {
+      g_dayWinMeta = true;
+      PrintFormat("ScalpXAU: META DIA já ativa | realizado=%.2f | meta=%.2f",
+                  DayPnLRealizedMoney(), DailyWinTargetMoney());
+   }
+
+   PrintFormat("ScalpXAUUSD_v1.00 init | %s | TF=%s | capital=%.2f | magic=%I64d | risk=%.2f%% | maxLots=%.2f",
+               _Symbol, EnumToString(InpTF), GetCapital(), InpMagic, InpRiskPct, InpMaxLots);
+   PrintFormat("sessao GMT %02d:%02d-%02d:%02d (≈ Brasil %02d:%02d-%02d:%02d) flat GMT %02d:%02d | dias=%s | break=%d ADX>=%.1f body>=%.2fxATR | volFiltro=%s",
+               InpGmtOpenH, InpGmtOpenM, InpGmtCloseH, InpGmtCloseM,
+               MathMax(0, InpGmtOpenH - 3), InpGmtOpenM,
+               MathMax(0, InpGmtCloseH - 3), InpGmtCloseM,
+               InpGmtFlatH, InpGmtFlatM,
+               (InpWeekdaysOnly ? "seg-sex" : "todos"),
+               InpBrkBars, InpAdxMin, InpBodyAtr,
+               (InpUseVolumeFilter ? "sim" : "nao"));
+   PrintFormat("ScalpXAU: fuso Nomo≈GMT (UTC+0) | PC Brasil costuma ser GMT-3 → server = local+3h");
+   PrintFormat("escada: %.1f%%→%.0f%% | %.1f%%→+%.0f%% | L3=%s | SL %.2fxATR teto %.1f%% | stopDia=%.1f%% | metaDia=%.1f%% (%s)",
+               InpLadder1_Pct, InpLadder1_CloseFrac * 100.0,
+               InpLadder2_Pct, InpLadder2_CloseFrac * 100.0,
+               (InpUseLadder3 ? "sim" : "nao/softlock"),
+               InpSlAtr, InpMaxSL_CapitalPct,
+               InpDailyLossPercent, InpDailyWinPercent,
+               (InpUseDailyWinMeta ? "on" : "off"));
+   PrintFormat("metaDia=só flat+realizado | SEM grid/martingale | maxTrades/dia=%d | softLock arm=%.2fxATR | volMin=%.2f | spreadMax=%d",
+               InpMaxTradesDay, InpSoftArm, InpVolMin, InpSpreadMax);
+   PrintFormat("ScalpXAU: status agora=%s | server=%s | tradeTerminal=%s | tradeMQL=%s",
+               SessionStatusText(TimeTradeServer()),
+               TimeToString(TimeTradeServer(), TIME_DATE|TIME_MINUTES),
+               (TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) ? "on" : "OFF"),
+               (MQLInfoInteger(MQL_TRADE_ALLOWED) ? "on" : "OFF"));
+   UpdateChartComment();
+   return INIT_SUCCEEDED;
+}
+
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+{
+   Comment("");
+   if(hEMA50  != INVALID_HANDLE) IndicatorRelease(hEMA50);
+   if(hEMA200 != INVALID_HANDLE) IndicatorRelease(hEMA200);
+   if(hADX    != INVALID_HANDLE) IndicatorRelease(hADX);
+   if(hATR    != INVALID_HANDLE) IndicatorRelease(hATR);
+   if(hVol    != INVALID_HANDLE) IndicatorRelease(hVol);
+}
+
+//+------------------------------------------------------------------+
+void OnTick()
+{
+   ResetDayIfNeeded();
+   UpdateChartComment();
+
+   datetime now = TimeTradeServer();
+
+   // Esses returns eram SILENCIOSOS — Comment mostrava SESSÃO mas Experts ficava mudo
+   if(!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED))
+   {
+      static datetime lastLogTerm = 0;
+      if(now - lastLogTerm >= 60)
+      {
+         lastLogTerm = now;
+         Print("ScalpXAU: BLOCK | botão AlgoTrading do terminal OFF");
+      }
+      return;
+   }
+   if(!MQLInfoInteger(MQL_TRADE_ALLOWED))
+   {
+      static datetime lastLogMql = 0;
+      if(now - lastLogMql >= 60)
+      {
+         lastLogMql = now;
+         Print("ScalpXAU: BLOCK | desmarque/marque 'Permite trading ao vivo' nas propriedades do EA (Aba Comum)");
+      }
+      return;
+   }
+
+   // META DIA / STOP DIA: escada continua (exceto se flat forçado no STOP)
+   if(CountOurPositions() > 0 && !ShouldFlat(now) && !g_dayStopped)
+      ManageLadderAndSoftLock();
+
+   if(ShouldFlat(now))
+   {
+      if(CountOurPositions() > 0)
+         CloseAllOurs(InpWeekdaysOnly && !IsWeekday(now) ? "flat_weekend" : "flat_swap");
+      return;
+   }
+
+   if(DailyLossHit() || g_dayStopped)
+   {
+      g_dayStopped = true;
+      if(!g_loggedDailyFlat)
+      {
+         PrintFormat("ScalpXAU: STOP DIÁRIO %.1f%% | dayPnL=%.2f | limite=%.2f → sem novas entradas",
+                     InpDailyLossPercent, DayPnLMoney(), DailyLossLimitMoney());
+         g_loggedDailyFlat = true;
+      }
+      if(InpFlatOnDailyLoss && CountOurPositions() > 0)
+         CloseAllOurs("daily_loss");
+      return;
+   }
+
+   if(g_dayWinMeta || DailyWinHit())
+   {
+      g_dayWinMeta = true;
+      if(!g_loggedDailyWin)
+      {
+         PrintFormat("ScalpXAU: META DIA %.1f%% | realizado=%.2f | meta=%.2f → sem novas entradas (flat+realizado)",
+                     InpDailyWinPercent, DayPnLRealizedMoney(), DailyWinTargetMoney());
+         g_loggedDailyWin = true;
+      }
+      return;
+   }
+
+   datetime barTime = iTime(_Symbol, InpTF, 1);
+   if(barTime == 0 || barTime == g_lastBarTime)
+      return;
+   g_lastBarTime = barTime;
+
+   if(!SessionOpen(now))
+   {
+      if(InpWeekdaysOnly && !IsWeekday(now))
+         LogSkip("fim de semana (só seg-sex)");
+      else
+         LogSkip(StringFormat("fora da sessão %02d:%02d-%02d:%02d (server %s)",
+                              InpGmtOpenH, InpGmtOpenM, InpGmtCloseH, InpGmtCloseM,
+                              TimeToString(now, TIME_MINUTES)));
+      return;
+   }
+
+   if(InpVerboseLog)
+      PrintFormat("ScalpXAU: barra %s | avaliando entrada | spread=%d",
+                  TimeToString(barTime, TIME_DATE|TIME_MINUTES), CurrentSpreadPoints());
+
+   // Sem grid: no máximo 1 posição (ignora input > 1)
+   int maxPos = 1;
+   if(CountOurPositions() >= maxPos)
+   {
+      LogSkip(StringFormat("posição aberta (%d)", CountOurPositions()));
+      return;
+   }
+
+   if(InpMaxTradesDay > 0 && g_tradesToday >= InpMaxTradesDay)
+   {
+      LogSkip(StringFormat("teto trades/dia %d/%d", g_tradesToday, InpMaxTradesDay));
+      return;
+   }
+
+   int dir = 0;
+   if(!GetSignal(dir) || dir == 0)
+      return;
+
+   OpenTrade(dir);
+}
+
+//+------------------------------------------------------------------+

@@ -70,19 +70,22 @@ O reset também reinicia a “época”: o PnL antigo deixa de ser somado (já e
 
 | Par | Timeframe | EA | Magic | Versão | Papel |
 |-----|-----------|----|-------|--------|-------|
-| USDJPY | M5 | **ScalpUSDJPY_v3** | 260831 | 3.03 | Daytrade escada % (port ScalpWIN) |
+| XAUUSD | **M15** | **ScalpXAUUSD_v1** | 320930 | 1.00 | Daytrade ouro escada % (recomendado) |
 | EURUSD | M30 | TrendEURUSD_v1 | 260828 | 1.22 | Trend filtrado |
-| USDJPY | M5 | ScalpUSDJPY_v2 | 260830 | 2.01 | Daytrade seletivo (referência) |
+| USDJPY | M5 | ScalpUSDJPY_v3 | 260831 | 3.03 | Pausado / referência |
 
-**ScalpUSDJPY_v3** (preferido na Nomo)
-- Lógica ScalpWIN (escada + META/STOP) com **filtros mais duros no FX**
-- Entrada: rompimento **5** barras · ADX ≥ **25** · corpo ≥ **0,45×ATR** · volume ≥ média
-- Servidor Nomo ≈ **GMT (UTC+0)** = horário de Brasília **+3h**
-- Sessão **13:00–19:00 GMT** (≈ **10:00–16:00 Brasília**) · flat **21:00 GMT** (≈18:00 BRT) · **só seg–sex**
-- Máx. **4** trades/dia · risco **0,30%** · STOP DIA **5%** · META DIA **3%** · SL **1,8×ATR**
-- Magic **260831**
+**ScalpXAUUSD_v1** (preferido na Nomo)
+- DNA **ScalpWIN**: rompimento + EMA/ADX + escada **+2%→50%** / **+5%→+25%** + soft lock
+- **Sem grid / martingale** — máx. **1 posição**, sem reforço de perda
+- **META DIA +3%** só com conta **flat** + lucro **realizado** · **STOP DIA 5%** (com floating)
+- Timeframe recomendado: **M15** (M5 = ruído; H1 = poucas ops no daytrade)
+- Sessão **13:00–19:00 GMT** (≈10–16 Brasília) · flat **21:00 GMT** · **só seg–sex**
+- Risco **0,25%**/trade · máx. **3** trades/dia · SL **1,6×ATR** · maxLots **0,10**
+- Magic **320930**
 
-Instalação: copie `eas/nomo/ScalpUSDJPY_v3.mq5` → `MQL5/Experts/`, compile (F7). Gráfico **USDJPY M5**. **Remova** e arraste de novo. Log: `v3.03`, `sessao GMT 13:00-19:00`.
+Instalação: copie `eas/nomo/ScalpXAUUSD_v1.mq5` → `MQL5/Experts/`, compile (F7). Gráfico **XAUUSD M15**. Remova USDJPY do gráfico (ou desative AlgoTrading nele). Log: `v1.00`, `TF=PERIOD_M15`, `metaDia=só flat+realizado`.
+
+**Por que M15?** Ouro no M5 gera muitos falsos rompimentos (como o USDJPY sofreu); H1 é lento demais para daytrade com flat 21:00 GMT. M15 equilibra sinal e frequência.
 
 ### Demais EAs Nomo (referência)
 
@@ -119,7 +122,8 @@ eas/
     ScalpWIN_v1.mq5       # Clear / WIN scalp TP (referência)
     TrendWIN_v1.mq5       # Clear / WIN tendência (referência)
   nomo/
-    ScalpUSDJPY_v3.mq5    # Nomo / USDJPY escada % (recomendado)
+    ScalpXAUUSD_v1.mq5    # Nomo / XAUUSD escada % (recomendado)
+    ScalpUSDJPY_v3.mq5    # USDJPY (pausado / referência)
     ScalpUSDJPY_v2.mq5
     TrendEURUSD_v1.mq5
     TrendXRPUSD_v1.mq5
