@@ -3,10 +3,10 @@
 //| Nomo - daytrade XAUUSD | DNA ScalpWIN (sem grid/martingale)      |
 //| Rompimento M15 + EMA/ADX + escada % + soft lock                  |
 //| META DIA só flat+realizado | STOP DIA com floating | 1 posição   |
-//| v1.04: L1 cedo 0.5% (~US$1.50) — vários scalps até a META         |
+//| v1.05: aperta entrada (EMA on, ADX22, corpo/vol/break)            |
 //+------------------------------------------------------------------+
 #property copyright "Vitor / mt5-eas"
-#property version   "1.04"
+#property version   "1.05"
 #property strict
 
 #include <Trade/Trade.mqh>
@@ -54,18 +54,18 @@ input int    InpGmtCloseM           = 0;
 input int    InpGmtFlatH            = 21;     // 21:00 GMT ≈ 18:00 Brasília
 input int    InpGmtFlatM            = 0;
 
-input group "=== Entrada (rompimento) — afrouxado v1.01/v1.02 ==="
-input int    InpBreakN              = 3;      // Rompimento M15 (era 4)
+input group "=== Entrada (rompimento) — apertado v1.05 (menos chop) ==="
+input int    InpBreakBars           = 4;      // Rompimento M15 (era 3 frouxo)
 input int    InpEMAFast             = 50;
 input int    InpEMASlow             = 200;
-input bool   InpEmaFilter           = false;  // false = mais entradas (era EMA obrigatória)
+input bool   InpUseEmaTrend         = true;   // true = só a favor EMA50/200
 input int    InpADXPeriod           = 14;
-input double InpAdxGate             = 18.0;   // Afrouxado (era 22)
+input double InpAdxMin              = 22.0;   // ADX mínimo (era 18 frouxo)
 input bool   InpUseADXFilter        = true;
-input double InpBodyGate            = 0.30;   // Corpo mínimo × ATR (era 0.40)
+input double InpBodyMinAtr          = 0.40;   // Corpo mínimo × ATR (era 0.30)
 input bool   InpUseVolumeFilter     = true;
 input int    InpVolAvgBars          = 20;
-input double InpVolGate             = 0.85;   // Volume vs média (era 1.00)
+input double InpVolMin              = 1.00;   // Volume vs média (era 0.85)
 input ENUM_TIMEFRAMES InpTF         = PERIOD_M15; // Recomendado: M15
 
 input group "=== Stop (ATR, teto em % do capital) ==="
@@ -558,9 +558,9 @@ bool VolumeOK(string &why)
    }
 
    double mult = (double)v1 / avg;
-   if(mult < InpVolGate)
+   if(mult < InpVolMin)
    {
-      why = StringFormat("volume fraco %.2fx < %.2fx", mult, InpVolGate);
+      why = StringFormat("volume fraco %.2fx < %.2fx", mult, InpVolMin);
       return false;
    }
    return true;
@@ -576,9 +576,9 @@ bool GetSignal(int &dir)
    if(!Copy1(hADX, 0, adx)) { LogSkip("ADX sem dados"); return false; }
    if(!Copy1(hATR, 0, atr) || atr <= 0.0) { LogSkip("ATR sem dados"); return false; }
 
-   if(InpUseADXFilter && adx < InpAdxGate)
+   if(InpUseADXFilter && adx < InpAdxMin)
    {
-      LogSkip(StringFormat("ADX fraco %.1f < %.1f", adx, InpAdxGate));
+      LogSkip(StringFormat("ADX fraco %.1f < %.1f", adx, InpAdxMin));
       return true;
    }
 
@@ -594,14 +594,14 @@ bool GetSignal(int &dir)
    if(open1 <= 0.0 || close1 <= 0.0) { LogSkip("candle 1 sem OHLC"); return false; }
 
    double body = MathAbs(close1 - open1);
-   double minBody = atr * InpBodyGate;
+   double minBody = atr * InpBodyMinAtr;
    if(body < minBody)
    {
       LogSkip(StringFormat("corpo fraco %.1f < %.1f pts", body / _Point, minBody / _Point));
       return true;
    }
 
-   int bars = MathMax(2, InpBreakN);
+   int bars = MathMax(2, InpBreakBars);
    double hh = iHigh(_Symbol, InpTF, 2);
    double ll = iLow(_Symbol, InpTF, 2);
    for(int i = 3; i <= bars; i++)
@@ -617,7 +617,7 @@ bool GetSignal(int &dir)
 
    if(bull && close1 > hh)
    {
-      if(InpEmaFilter && !upTrend)
+      if(InpUseEmaTrend && !upTrend)
       {
          LogSkip("rompimento alta mas EMA contra");
          return true;
@@ -631,7 +631,7 @@ bool GetSignal(int &dir)
 
    if(bear && close1 < ll)
    {
-      if(InpEmaFilter && !downTrend)
+      if(InpUseEmaTrend && !downTrend)
       {
          LogSkip("rompimento baixa mas EMA contra");
          return true;
@@ -1042,7 +1042,7 @@ void UpdateChartComment()
                        ? StringFormat("%d/%d", g_tradesToday, InpTradesCapDay)
                        : StringFormat("%d/∞", g_tradesToday));
    string txt = StringFormat(
-      "ScalpXAUUSD v1.04 | %s | TF %s\ncap %.0f | lots≈%.2f | dayPnL %.2f (real %.2f) | meta %.2f\nspread %d | L%d | trades %s | 1pos | %s%s",
+      "ScalpXAUUSD v1.05 | %s | TF %s\ncap %.0f | lots≈%.2f | dayPnL %.2f (real %.2f) | meta %.2f\nspread %d | L%d | trades %s | 1pos | %s%s",
       _Symbol,
       EnumToString(InpTF),
       GetCapital(),
@@ -1103,7 +1103,7 @@ int OnInit()
                   DayPnLRealizedMoney(), DailyWinTargetMoney());
    }
 
-   PrintFormat("ScalpXAUUSD_v1.04 init | %s | TF=%s | capital=%.2f | lots≈%.2f | mode=%s | magic=%I64d | maxLots=%.2f",
+   PrintFormat("ScalpXAUUSD_v1.05 init | %s | TF=%s | capital=%.2f | lots≈%.2f | mode=%s | magic=%I64d | maxLots=%.2f",
                _Symbol, EnumToString(InpTF), GetCapital(), LotsFromCapitalBands(GetCapital()),
                EnumToString(InpLotMode), InpMagic, InpMaxLots);
    PrintFormat("faixas: start=%.0f width=%.0f → +%.2f lote/faixa | minCap=%.0f | agora≈%.2f lotes",
@@ -1115,7 +1115,7 @@ int OnInit()
                MathMax(0, InpGmtCloseH - 3), InpGmtCloseM,
                InpGmtFlatH, InpGmtFlatM,
                (InpWeekdaysOnly ? "seg-sex" : "todos"),
-               InpBreakN, InpAdxGate, InpBodyGate,
+               InpBreakBars, InpAdxMin, InpBodyMinAtr,
                (InpUseVolumeFilter ? "sim" : "nao"));
    PrintFormat("ScalpXAU: fuso Nomo≈GMT (UTC+0) | PC Brasil costuma ser GMT-3 → server = local+3h");
    PrintFormat("escada: %.1f%%→%.0f%% | %.1f%%→+%.0f%% | L3=%s | SL %.2fxATR teto %.1f%% | stopDia=%.1f%% | metaDia=%.1f%% (%s)",
@@ -1125,10 +1125,10 @@ int OnInit()
                InpSlAtr, InpMaxSL_CapitalPct,
                InpDailyLossPercent, InpDailyWinPercent,
                (InpUseDailyWinMeta ? "on" : "off"));
-   PrintFormat("metaDia=só flat+realizado | SEM grid | EMA=%s | tetoTrades=%s | softLock arm=%.2fxATR | L1=%.1f%% L2=%.1f%% | volGate=%.2f",
-               (InpEmaFilter ? "on" : "off"),
+   PrintFormat("metaDia=só flat+realizado | SEM grid | EMA=%s | tetoTrades=%s | softLock arm=%.2fxATR | L1=%.1f%% L2=%.1f%% | volMin=%.2f",
+               (InpUseEmaTrend ? "on" : "off"),
                (InpTradesCapDay > 0 ? IntegerToString(InpTradesCapDay) : "ilimitado"),
-               InpSoftStart, InpTake1Pct, InpTake2Pct, InpVolGate);
+               InpSoftStart, InpTake1Pct, InpTake2Pct, InpVolMin);
    PrintFormat("ScalpXAU: status agora=%s | server=%s | tradeTerminal=%s | tradeMQL=%s",
                SessionStatusText(TimeTradeServer()),
                TimeToString(TimeTradeServer(), TIME_DATE|TIME_MINUTES),

@@ -70,7 +70,7 @@ O reset também reinicia a “época”: o PnL antigo deixa de ser somado (já e
 
 | Par | Timeframe | EA | Magic | Versão | Papel |
 |-----|-----------|----|-------|--------|-------|
-| XAUUSD | **M15** | **ScalpXAUUSD_v1** | 320930 | 1.04 | Daytrade ouro escada % (recomendado) |
+| XAUUSD | **M15** | **ScalpXAUUSD_v1** | 320930 | 1.05 | Daytrade ouro escada % (recomendado) |
 | EURUSD | M30 | TrendEURUSD_v1 | 260828 | 1.22 | Trend filtrado |
 | USDJPY | M5 | ScalpUSDJPY_v3 | 260831 | 3.03 | Pausado / referência |
 
@@ -78,12 +78,12 @@ O reset também reinicia a “época”: o PnL antigo deixa de ser somado (já e
 - DNA **ScalpWIN**: rompimento + ADX + escada + soft lock · **sem grid/martingale** (1 posição)
 - **Faixas de lote:** US$200–500 → **0,01** · 500–800 → **0,02** · 800–1100 → **0,03** · (+US$300 → +0,01)
 - **META DIA +3%** (flat + realizado) · **STOP DIA 5%** · **sem teto** de trades/dia
-- Escada **v1.04:** **+0,5% → zera micro-lote** (~US$1,50 em ~300) · **+1% → L2** · soft lock **0,5×ATR**
-- Filtros: EMA **off** · ADX ≥ **18** · corpo ≥ **0,30×ATR** · break **3** · vol ≥ **0,85×**
+- Escada: **+0,5% → zera micro-lote** (~US$1,50 em ~300) · **+1% → L2** · soft lock **0,5×ATR**
+- Filtros **v1.05 (apertados):** EMA **on** · ADX ≥ **22** · corpo ≥ **0,40×ATR** · break **4** · vol ≥ **1,0×**
 - Sessão **13:00–19:00 GMT** · flat **21:00 GMT** · **só seg–sex** · M15
 - Magic **320930**
 
-Instalação: copie `eas/nomo/ScalpXAUUSD_v1.mq5` → `MQL5/Experts/`, compile (F7). Gráfico **XAUUSD M15**. **Remova** e arraste de novo. Log: `v1.04`, `L1=0.5%`, `mode=XAU_SIZING_BANDS`.
+Instalação: copie `eas/nomo/ScalpXAUUSD_v1.mq5` → `MQL5/Experts/`, compile (F7). Gráfico **XAUUSD M15**. **Remova** e arraste de novo. Log: `v1.05`, `EMA=on`, `ADX>=22`, `break=4`.
 
 ### Demais EAs Nomo (referência)
 
