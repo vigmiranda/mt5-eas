@@ -3,10 +3,10 @@
 //| Nomo - daytrade XAUUSD | DNA ScalpWIN (sem grid/martingale)      |
 //| Rompimento M15 + EMA/ADX + escada % + soft lock                  |
 //| META DIA só flat+realizado | STOP DIA com floating | 1 posição   |
-//| v1.02: escada cedo + soft lock cedo + sem teto trades/dia                |
+//| v1.03: faixas de lote por capital (200→0.01, +300→+0.01)         |
 //+------------------------------------------------------------------+
 #property copyright "Vitor / mt5-eas"
-#property version   "1.02"
+#property version   "1.03"
 #property strict
 
 #include <Trade/Trade.mqh>
@@ -16,18 +16,23 @@ CTrade trade;
 int CountOurPositions();
 bool SelectOurPosition(ulong &ticket, long &type, double &vol, double &open, double &sl, double &profit);
 
-enum ENUM_SIZING
+enum ENUM_XAU_SIZING
 {
-   SIZING_RISK_PCT = 0,  // Lote pelo risco % do saldo vs SL
-   SIZING_FIXED    = 1   // Lote fixo
+   XAU_SIZING_BANDS = 0,  // Faixas por capital (recomendado)
+   XAU_SIZING_RISK  = 1,  // Lote pelo risco % vs SL
+   XAU_SIZING_FIXED = 2   // Lote fixo
 };
 
 //------------------------ Inputs ------------------------------------
 // Sem grid/martingale: 1 posição, sem reforço de perda
-input group "=== Volume / risco ==="
-input ENUM_SIZING InpSizingMode     = SIZING_RISK_PCT;
-input double InpRiskPct             = 0.25;   // Risco por trade (% saldo) — ouro: conservador
-input double InpFixedLots           = 0.01;
+input group "=== Volume / faixas de capital ==="
+input ENUM_XAU_SIZING InpLotMode    = XAU_SIZING_BANDS;
+input double InpBandStartUsd        = 200.0;  // 200-500→0.01 | 500-800→0.02 | 800-1100→0.03
+input double InpBandWidthUsd        = 300.0;  // Largura da faixa (US$)
+input double InpLotPerBand          = 0.01;   // Lote por faixa
+input double InpMinCapTrade         = 200.0;  // Abaixo disso: sem trade
+input double InpRiskPct             = 0.25;   // Só se modo RISK
+input double InpFixedLots           = 0.01;   // Só se modo FIXED
 input double InpMaxLots             = 0.10;   // Teto duro (ouro move muito)
 input double InpMinLots             = 0.01;
 
@@ -451,11 +456,37 @@ double CalcSLPoints(const double lots)
 }
 
 //+------------------------------------------------------------------+
+// Faixas: 200-500→0.01 | 500-800→0.02 | 800-1100→0.03 | ...
+double LotsFromCapitalBands(const double capital)
+{
+   if(capital < InpMinCapTrade || capital < InpBandStartUsd)
+      return 0.0;
+
+   double width = InpBandWidthUsd;
+   if(width <= 0.0) width = 300.0;
+   double stepLot = InpLotPerBand;
+   if(stepLot <= 0.0) stepLot = 0.01;
+
+   double bands = MathFloor((capital - InpBandStartUsd) / width + 1e-8) + 1.0;
+   if(bands < 1.0) bands = 1.0;
+   return NormalizeLots(bands * stepLot);
+}
+
+//+------------------------------------------------------------------+
 double CalcLots(const double slPts)
 {
-   if(InpSizingMode == SIZING_FIXED)
+   if(InpLotMode == XAU_SIZING_FIXED)
       return NormalizeLots(InpFixedLots);
 
+   if(InpLotMode == XAU_SIZING_BANDS)
+   {
+      double lots = LotsFromCapitalBands(GetCapital());
+      if(lots <= 0.0)
+         return 0.0;
+      return lots;
+   }
+
+   // XAU_SIZING_RISK
    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
    if(balance <= 0.0) balance = GetCapital();
    double moneyRisk = balance * MathAbs(InpRiskPct) / 100.0;
@@ -629,15 +660,20 @@ bool OpenTrade(const int dir)
    // Pré-cálculo de SL em pts com lote provisório para sizing
    double slPtsProbe = ClampSLPoints(ATRPointsRaw() * InpSlAtr);
    double lots = CalcLots(slPtsProbe);
-   if(lots < SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN))
+   if(lots <= 0.0 || lots < SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN))
    {
-      LogSkip(StringFormat("lote insuficiente (cap=%.2f)", GetCapital()));
+      LogSkip(StringFormat("lote insuficiente (cap=%.2f mode=%s)", GetCapital(), EnumToString(InpLotMode)));
       return false;
    }
 
    double slPts = CalcSLPoints(lots);
-   // Recalcula lote com SL final (teto % capital pode apertar)
+   // Em RISK o teto % capital pode apertar o SL e o lote; em BANDS o lote não muda
    lots = CalcLots(slPts);
+   if(lots <= 0.0 || lots < SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN))
+   {
+      LogSkip(StringFormat("lote insuficiente após SL (cap=%.2f)", GetCapital()));
+      return false;
+   }
 
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
@@ -1006,10 +1042,11 @@ void UpdateChartComment()
                        ? StringFormat("%d/%d", g_tradesToday, InpTradesCapDay)
                        : StringFormat("%d/∞", g_tradesToday));
    string txt = StringFormat(
-      "ScalpXAUUSD v1.02 | %s | TF %s\ncap %.0f | dayPnL %.2f (real %.2f) | meta %.2f\nspread %d | L%d | trades %s | 1pos | %s%s",
+      "ScalpXAUUSD v1.03 | %s | TF %s\ncap %.0f | lots≈%.2f | dayPnL %.2f (real %.2f) | meta %.2f\nspread %d | L%d | trades %s | 1pos | %s%s",
       _Symbol,
       EnumToString(InpTF),
       GetCapital(),
+      CalcLots(ClampSLPoints(ATRPointsRaw() * InpSlAtr)),
       DayPnLMoney(),
       DayPnLRealizedMoney(),
       DailyWinTargetMoney(),
@@ -1066,8 +1103,12 @@ int OnInit()
                   DayPnLRealizedMoney(), DailyWinTargetMoney());
    }
 
-   PrintFormat("ScalpXAUUSD_v1.02 init | %s | TF=%s | capital=%.2f | magic=%I64d | risk=%.2f%% | maxLots=%.2f",
-               _Symbol, EnumToString(InpTF), GetCapital(), InpMagic, InpRiskPct, InpMaxLots);
+   PrintFormat("ScalpXAUUSD_v1.03 init | %s | TF=%s | capital=%.2f | lots≈%.2f | mode=%s | magic=%I64d | maxLots=%.2f",
+               _Symbol, EnumToString(InpTF), GetCapital(), LotsFromCapitalBands(GetCapital()),
+               EnumToString(InpLotMode), InpMagic, InpMaxLots);
+   PrintFormat("faixas: start=%.0f width=%.0f → +%.2f lote/faixa | minCap=%.0f | agora≈%.2f lotes",
+               InpBandStartUsd, InpBandWidthUsd, InpLotPerBand, InpMinCapTrade,
+               LotsFromCapitalBands(GetCapital()));
    PrintFormat("sessao GMT %02d:%02d-%02d:%02d (≈ Brasil %02d:%02d-%02d:%02d) flat GMT %02d:%02d | dias=%s | break=%d ADX>=%.1f body>=%.2fxATR | volFiltro=%s",
                InpGmtOpenH, InpGmtOpenM, InpGmtCloseH, InpGmtCloseM,
                MathMax(0, InpGmtOpenH - 3), InpGmtOpenM,
