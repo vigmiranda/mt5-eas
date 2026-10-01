@@ -3,10 +3,10 @@
 //| Nomo - daytrade XAUUSD | DNA ScalpWIN (sem grid/martingale)      |
 //| Rompimento M15 + EMA/ADX + escada % + soft lock                  |
 //| META DIA só flat+realizado | STOP DIA com floating | 1 posição   |
-//| v1.03: faixas de lote por capital (200→0.01, +300→+0.01)         |
+//| v1.04: L1 cedo 0.5% (~US$1.50) — vários scalps até a META         |
 //+------------------------------------------------------------------+
 #property copyright "Vitor / mt5-eas"
-#property version   "1.03"
+#property version   "1.04"
 #property strict
 
 #include <Trade/Trade.mqh>
@@ -76,9 +76,9 @@ input int    InpMinSL_Points        = 150;    // Distância mínima SL (pts)
 input int    InpMaxSL_Points        = 5000;   // Teto pts (ouro usa pontos pequenos)
 
 input group "=== Escada de lucro (% do capital do dia) — ouro curto ==="
-input double InpL1Pct               = 1.0;    // 1º alvo cedo (~US$3 em conta ~300)
+input double InpTake1Pct            = 0.5;    // 1º alvo cedo (~US$1.50 em conta ~300) — era 1%
 input double InpL1Close             = 0.50;   // Fecha 50% (ou zera se micro-lote)
-input double InpL2Pct               = 2.0;    // 2º alvo
+input double InpTake2Pct            = 1.0;    // 2º alvo (era 2%)
 input double InpL2Close             = 0.25;
 input double InpL3Pct               = 3.0;    // opcional
 input double InpL3Close             = 0.25;
@@ -855,7 +855,7 @@ void ManageLadderAndSoftLock()
    // Micro-lote (~0.01): não dá para parcial útil → zera no L1 (igual 1 contrato WIN)
    bool microLot = (g_posOpenVol < 2.0 * vmin - 1e-8);
 
-   if(g_ladderStep < 1 && tradePct >= InpL1Pct)
+   if(g_ladderStep < 1 && tradePct >= InpTake1Pct)
    {
       double want = RoundDownVolume(g_posOpenVol * InpL1Close);
       if(microLot)
@@ -864,7 +864,7 @@ void ManageLadderAndSoftLock()
       if(want >= vmin - 1e-8)
       {
          double before = profit;
-         if(CloseVolume(ticket, want, StringFormat("L1 %.1f%% cap (pnl %.2f)", InpL1Pct, tradePnL)))
+         if(CloseVolume(ticket, want, StringFormat("L1 %.1f%% cap (pnl %.2f)", InpTake1Pct, tradePnL)))
          {
             g_ladderStep = 1;
             if(vol > 0.0)
@@ -884,7 +884,7 @@ void ManageLadderAndSoftLock()
    tradePnL = TradeProfitMoney(profit);
    tradePct = 100.0 * tradePnL / cap;
 
-   if(g_ladderStep == 1 && tradePct >= InpL2Pct)
+   if(g_ladderStep == 1 && tradePct >= InpTake2Pct)
    {
       double want = RoundDownVolume(g_posOpenVol * InpL2Close);
       if(want <= 0.0 && vol > 0.0)
@@ -897,7 +897,7 @@ void ManageLadderAndSoftLock()
       if(want >= vmin - 1e-8)
       {
          double before = profit;
-         if(CloseVolume(ticket, want, StringFormat("L2 %.1f%% cap (pnl %.2f)", InpL2Pct, tradePnL)))
+         if(CloseVolume(ticket, want, StringFormat("L2 %.1f%% cap (pnl %.2f)", InpTake2Pct, tradePnL)))
          {
             g_ladderStep = 2;
             if(vol > 0.0)
@@ -930,7 +930,7 @@ void ManageLadderAndSoftLock()
    if(!SelectOurPosition(ticket, type, vol, open, sl, profit))
       return;
 
-   if(g_ladderStep < 1 && tradePct >= InpL2Pct)
+   if(g_ladderStep < 1 && tradePct >= InpTake2Pct)
    {
       PrintFormat("ScalpXAU: SAFETY close | trade %.1f%% >= L2 e escada L0", tradePct);
       if(CloseVolume(ticket, vol, "SAFETY L2"))
@@ -1042,7 +1042,7 @@ void UpdateChartComment()
                        ? StringFormat("%d/%d", g_tradesToday, InpTradesCapDay)
                        : StringFormat("%d/∞", g_tradesToday));
    string txt = StringFormat(
-      "ScalpXAUUSD v1.03 | %s | TF %s\ncap %.0f | lots≈%.2f | dayPnL %.2f (real %.2f) | meta %.2f\nspread %d | L%d | trades %s | 1pos | %s%s",
+      "ScalpXAUUSD v1.04 | %s | TF %s\ncap %.0f | lots≈%.2f | dayPnL %.2f (real %.2f) | meta %.2f\nspread %d | L%d | trades %s | 1pos | %s%s",
       _Symbol,
       EnumToString(InpTF),
       GetCapital(),
@@ -1103,7 +1103,7 @@ int OnInit()
                   DayPnLRealizedMoney(), DailyWinTargetMoney());
    }
 
-   PrintFormat("ScalpXAUUSD_v1.03 init | %s | TF=%s | capital=%.2f | lots≈%.2f | mode=%s | magic=%I64d | maxLots=%.2f",
+   PrintFormat("ScalpXAUUSD_v1.04 init | %s | TF=%s | capital=%.2f | lots≈%.2f | mode=%s | magic=%I64d | maxLots=%.2f",
                _Symbol, EnumToString(InpTF), GetCapital(), LotsFromCapitalBands(GetCapital()),
                EnumToString(InpLotMode), InpMagic, InpMaxLots);
    PrintFormat("faixas: start=%.0f width=%.0f → +%.2f lote/faixa | minCap=%.0f | agora≈%.2f lotes",
@@ -1119,8 +1119,8 @@ int OnInit()
                (InpUseVolumeFilter ? "sim" : "nao"));
    PrintFormat("ScalpXAU: fuso Nomo≈GMT (UTC+0) | PC Brasil costuma ser GMT-3 → server = local+3h");
    PrintFormat("escada: %.1f%%→%.0f%% | %.1f%%→+%.0f%% | L3=%s | SL %.2fxATR teto %.1f%% | stopDia=%.1f%% | metaDia=%.1f%% (%s)",
-               InpL1Pct, InpL1Close * 100.0,
-               InpL2Pct, InpL2Close * 100.0,
+               InpTake1Pct, InpL1Close * 100.0,
+               InpTake2Pct, InpL2Close * 100.0,
                (InpUseL3 ? "sim" : "nao/softlock"),
                InpSlAtr, InpMaxSL_CapitalPct,
                InpDailyLossPercent, InpDailyWinPercent,
@@ -1128,7 +1128,7 @@ int OnInit()
    PrintFormat("metaDia=só flat+realizado | SEM grid | EMA=%s | tetoTrades=%s | softLock arm=%.2fxATR | L1=%.1f%% L2=%.1f%% | volGate=%.2f",
                (InpEmaFilter ? "on" : "off"),
                (InpTradesCapDay > 0 ? IntegerToString(InpTradesCapDay) : "ilimitado"),
-               InpSoftStart, InpL1Pct, InpL2Pct, InpVolGate);
+               InpSoftStart, InpTake1Pct, InpTake2Pct, InpVolGate);
    PrintFormat("ScalpXAU: status agora=%s | server=%s | tradeTerminal=%s | tradeMQL=%s",
                SessionStatusText(TimeTradeServer()),
                TimeToString(TimeTradeServer(), TIME_DATE|TIME_MINUTES),
