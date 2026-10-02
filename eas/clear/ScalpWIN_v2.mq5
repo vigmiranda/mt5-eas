@@ -4,10 +4,10 @@
 //| Volume por capital | SL até 5% do capital | stop dia 10%          |
 //| Meta dia +3%: só com conta flat (lucro realizado)                |
 //| Sem teto de trades/dia | parciais: 2%→50% · 5%→+25% · resto trail |
-//| v2.09: parcial 10009 OK + META DIA só realizado/flat             |
+//| v2.10: parcial confirma deal + SAFETY com graça (mantém proteção)|
 //+------------------------------------------------------------------+
 #property copyright "Vitor / mt5-eas"
-#property version   "2.09"
+#property version   "2.10"
 #property strict
 
 #include <Trade/Trade.mqh>
@@ -91,6 +91,7 @@ input double InpLadder2_CloseFrac  = 0.25;    // Fecha +25% do volume original
 input double InpLadder3_Pct        = 8.0;     // 3º alvo (opcional)
 input double InpLadder3_CloseFrac  = 0.25;    // Fecha o restante (~25%)
 input bool   InpUseLadder3         = false;   // Se false, o resto só soft lock
+input int    InpPartialGraceSec    = 4;       // Após L1 OK/pendente: espera antes do SAFETY L2
 
 input group "=== Soft lock (runner) ==="
 input double InpSoftStart_ATR      = 0.80;    // Arma trail após X ATR de lucro
@@ -123,6 +124,7 @@ double   g_posOpenPrice = 0.0;
 int      g_ladderStep = 0;       // 0=nada, 1=fez 1º, 2=fez 2º, 3=fez 3º
 double   g_realizedThisTrade = 0.0;
 datetime g_lastCloseFailLog = 0;
+datetime g_l1GraceUntil = 0;     // SAFETY L2 só após esta hora (dá tempo à parcial)
 double   g_seedCapital = 0.0;     // semente efetiva (GV ou input)
 double   g_realizedAll = 0.0;     // PnL realizado desde a época da semente
 double   g_feesAll = 0.0;         // taxas estimadas desde a época
@@ -529,6 +531,7 @@ void ResetPosState()
    g_posOpenPrice = 0.0;
    g_ladderStep = 0;
    g_realizedThisTrade = 0.0;
+   g_l1GraceUntil = 0;
 }
 
 //+------------------------------------------------------------------+
@@ -965,6 +968,61 @@ bool TradeRetcodeOk(const uint rc)
 }
 
 //+------------------------------------------------------------------+
+// Clear às vezes demora a atualizar POSITION_VOLUME após 10009 — confirma no histórico
+bool ConfirmPartialByHistory(const ulong posTicket, const double wantMin, const datetime since)
+{
+   if(posTicket == 0 || wantMin <= 0.0) return false;
+   datetime to = TimeTradeServer() + 2;
+   datetime from = since - 2;
+   if(from <= 0) from = to - 30;
+   if(!HistorySelect(from, to))
+      return false;
+
+   long posId = 0;
+   if(PositionSelectByTicket(posTicket))
+      posId = (long)PositionGetInteger(POSITION_IDENTIFIER);
+
+   double closed = 0.0;
+   int total = HistoryDealsTotal();
+   for(int i = total - 1; i >= 0; i--)
+   {
+      ulong d = HistoryDealGetTicket(i);
+      if(d == 0) continue;
+      if((long)HistoryDealGetInteger(d, DEAL_MAGIC) != InpMagic) continue;
+      if(HistoryDealGetString(d, DEAL_SYMBOL) != _Symbol) continue;
+      long entry = HistoryDealGetInteger(d, DEAL_ENTRY);
+      if(entry != DEAL_ENTRY_OUT && entry != DEAL_ENTRY_INOUT && entry != DEAL_ENTRY_OUT_BY)
+         continue;
+      datetime dt = (datetime)HistoryDealGetInteger(d, DEAL_TIME);
+      if(dt < since - 1) continue;
+      long dealPos = (long)HistoryDealGetInteger(d, DEAL_POSITION_ID);
+      if(posId != 0 && dealPos != 0 && dealPos != posId) continue;
+      closed += HistoryDealGetDouble(d, DEAL_VOLUME);
+      if(closed + 1e-8 >= wantMin)
+         return true;
+   }
+   return false;
+}
+
+//+------------------------------------------------------------------+
+bool RefreshPositionVolume(const ulong ticket, double &outVol)
+{
+   outVol = 0.0;
+   for(int i = 0; i < 6; i++)
+   {
+      if(!PositionSelectByTicket(ticket))
+      {
+         outVol = 0.0;
+         return false; // posição sumiu
+      }
+      outVol = PositionGetDouble(POSITION_VOLUME);
+      if(i < 5)
+         Sleep(30);
+   }
+   return true;
+}
+
+//+------------------------------------------------------------------+
 bool CloseVolume(const ulong ticket, const double volClose, const string reason)
 {
    if(volClose <= 0.0) return false;
@@ -1006,16 +1064,19 @@ bool CloseVolume(const ulong ticket, const double volClose, const string reason)
    }
 
    // Parcial: NÃO fazer fallback close total (bug v2.08: ret 10009 DONE virava zerar tudo)
+   datetime sentAt = TimeTradeServer();
    bool sent = trade.PositionClosePartial(ticket, want);
    uint rc = trade.ResultRetcode();
 
-   // Confirma no mercado: volume caiu ou posição sumiu
+   // Releitura com pequena espera — Clear frequentemente atrasa o volume
    double newVol = posVol;
-   bool stillOpen = PositionSelectByTicket(ticket);
-   if(stillOpen)
-      newVol = PositionGetDouble(POSITION_VOLUME);
-   else
-      newVol = 0.0;
+   bool stillOpen = RefreshPositionVolume(ticket, newVol);
+   if(!stillOpen)
+   {
+      PrintFormat("ScalpWIN2: PARCIAL %s | posição sumiu após pedido want=%.2f | step=%d | ret=%u",
+                  reason, want, g_ladderStep, rc);
+      return true;
+   }
 
    if(newVol < posVol - 1e-8)
    {
@@ -1026,11 +1087,21 @@ bool CloseVolume(const ulong ticket, const double volClose, const string reason)
       return true;
    }
 
+   // Volume igual: confirma deal no histórico (ret 10009 “Request executed”)
+   if((sent || TradeRetcodeOk(rc)) && ConfirmPartialByHistory(ticket, want * 0.99, sentAt))
+   {
+      PrintFormat("ScalpWIN2: PARCIAL %s | confirmada no histórico want=%.2f | step=%d | ret=%u (vol tela ainda %.2f)",
+                  reason, want, g_ladderStep, rc, newVol);
+      return true;
+   }
+
    if(sent || TradeRetcodeOk(rc))
    {
-      // Broker disse OK mas volume ainda não refletiu — tenta de novo no próximo tick
-      PrintFormat("ScalpWIN2: parcial pendente %s want=%.2f ret=%u %s — sem fallback total",
-                  reason, want, rc, trade.ResultComment());
+      // Broker disse OK mas ainda não refletiu — graça para SAFETY; retry no próximo tick
+      int grace = MathMax(1, InpPartialGraceSec);
+      g_l1GraceUntil = TimeTradeServer() + grace;
+      PrintFormat("ScalpWIN2: parcial pendente %s want=%.2f ret=%u %s — graça %ds (sem SAFETY ainda)",
+                  reason, want, rc, trade.ResultComment(), grace);
       return false;
    }
 
@@ -1110,6 +1181,7 @@ void ManageLadderAndSoftLock()
          if(CloseVolume(ticket, want, StringFormat("L1 %.1f%% cap (pnl R$%.0f)", InpLadder1_Pct, tradePnL)))
          {
             g_ladderStep = 1;
+            g_l1GraceUntil = 0;
             if(vol > 0.0)
                g_realizedThisTrade += before * (want / vol);
             if(!SelectOurPosition(ticket, type, vol, open, sl, profit))
@@ -1176,14 +1248,25 @@ void ManageLadderAndSoftLock()
    if(!SelectOurPosition(ticket, type, vol, open, sl, profit))
       return;
 
-   // Segurança: se já passou bem do L2 e ainda está 100% aberto (falha anterior), zera
+   // Segurança: passou L2 e ainda 100% aberto — MAS espera graça se L1 acabou de ser pedida
+   // (evita matar o runner no mesmo segundo da parcial pendente; mantém proteção após a graça)
    if(g_ladderStep < 1 && tradePct >= InpLadder2_Pct)
    {
-      PrintFormat("ScalpWIN2: SAFETY close | trade %.1f%% >= L2 e escada ainda L0", tradePct);
-      if(CloseVolume(ticket, vol, "SAFETY L2"))
+      datetime nowSrv = TimeTradeServer();
+      if(g_l1GraceUntil > 0 && nowSrv < g_l1GraceUntil)
       {
-         ResetPosState();
-         return;
+         if(InpVerboseLog)
+            PrintFormat("ScalpWIN2: SAFETY adiado | trade %.1f%% >= L2 mas parcial em graça (%ds)",
+                        tradePct, (int)(g_l1GraceUntil - nowSrv));
+      }
+      else
+      {
+         PrintFormat("ScalpWIN2: SAFETY close | trade %.1f%% >= L2 e escada ainda L0", tradePct);
+         if(CloseVolume(ticket, vol, "SAFETY L2"))
+         {
+            ResetPosState();
+            return;
+         }
       }
    }
 
@@ -1292,7 +1375,7 @@ void UpdateChartComment()
    string ladder = StringFormat("L%d", g_ladderStep);
    string skip = (g_lastSkipReason != "" ? "\nskip: " + g_lastSkipReason : "");
    string txt = StringFormat(
-      "ScalpWIN v2.09 | %s\ncap R$%.0f (%s) seed R$%.0f | fees R$%.2f | vol≈%.0f\ndayPnL R$%.0f (real R$%.0f) | meta R$%.0f | spread %d | escada %s | %s%s",
+      "ScalpWIN v2.10 | %s\ncap R$%.0f (%s) seed R$%.0f | fees R$%.2f | vol≈%.0f\ndayPnL R$%.0f (real R$%.0f) | meta R$%.0f | spread %d | escada %s | %s%s",
       _Symbol,
       GetCapital(),
       g_capitalSource,
@@ -1351,7 +1434,7 @@ int OnInit()
                   DayPnLRealizedMoney(), DailyWinTargetMoney(), InpDailyWinPercent);
    }
 
-   PrintFormat("ScalpWIN_v2.09 init | %s | capital=R$%.2f (%s) seed=R$%.2f realized=R$%.2f fees=R$%.2f | vol≈%.0f | magic=%I64d | tick=%.0f",
+   PrintFormat("ScalpWIN_v2.10 init | %s | capital=R$%.2f (%s) seed=R$%.2f realized=R$%.2f fees=R$%.2f | vol≈%.0f | magic=%I64d | tick=%.0f",
                _Symbol, GetCapital(), g_capitalSource, g_seedCapital, g_realizedAll, g_feesAll,
                CalcVolume(), InpMagic, TickSize());
    if(MathAbs(g_seedCapital - 850.0) > 0.5 && MathAbs(g_seedCapital - InpSeedBal) > 0.5)
@@ -1371,8 +1454,8 @@ int OnInit()
                (InpUseLadder3 ? "sim" : "nao/softlock"),
                InpSL_ATR_Mult, InpMaxSL_CapitalPct, InpDailyLossPercent,
                InpDailyWinPercent, (InpUseDailyWinMeta ? "on" : "off"));
-   PrintFormat("metaDia=só flat+realizado | parcial SEM fallback total | softLock arm=%.2fxATR trail=%.2fxATR",
-               InpSoftStart_ATR, InpTrail_ATR);
+   PrintFormat("metaDia=só flat+realizado | parcial confirma histórico | SAFETY graça=%ds | softLock arm=%.2fxATR trail=%.2fxATR",
+               InpPartialGraceSec, InpSoftStart_ATR, InpTrail_ATR);
    UpdateChartComment();
    return INIT_SUCCEEDED;
 }

@@ -15,7 +15,7 @@ Automação em **MetaTrader 5** para duas corretoras:
 
 | Ativo | Timeframe | EA | Magic | Versão | Papel |
 |-------|-----------|----|-------|--------|-------|
-| WINV26 / WIN$ | M5 | **ScalpWIN_v2** | 260917 | 2.09 | Daytrade escada % (recomendado) |
+| WINV26 / WIN$ | M5 | **ScalpWIN_v2** | 260917 | 2.10 | Daytrade escada % (recomendado) |
 | WINV26 / WIN$ | M5 | ScalpWIN_v1 | 260916 | 1.02 | Scalp TP/ATR (referência) |
 | WINV26 / WIN$ | M5 | TrendWIN_v1 | 260914 | 1.11 | Tendência (referência) |
 
@@ -31,8 +31,9 @@ Automação em **MetaTrader 5** para duas corretoras:
 - SL folgado ATR, teto **5%** · **STOP DIA 10%** (inclui floating; pode flat)
 - **META DIA +3%:** só com conta **flat** e lucro **realizado** (não trava por floating)
 - v2.09: parcial L1/L2 **sem** fallback que zerava tudo (bug ret 10009)
+- v2.10: parcial confirma no **histórico** + **SAFETY com graça** (~4s) — não tira a proteção, só dá tempo da L1
 
-Instalação: copie `eas/clear/ScalpWIN_v2.mq5` → `MQL5/Experts/`, compile (F7). **Remova** o EA do gráfico e arraste de novo. Log: `v2.09`, `metaDia=só flat+realizado`.
+Instalação: copie `eas/clear/ScalpWIN_v2.mq5` → `MQL5/Experts/`, compile (F7). **Remova** o EA do gráfico e arraste de novo. Log: `v2.10`, `SAFETY graça=4s`.
 
 ### Capital virtual Clear — como funciona
 
