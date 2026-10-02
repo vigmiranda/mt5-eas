@@ -71,6 +71,7 @@ O reset também reinicia a “época”: o PnL antigo deixa de ser somado (já e
 | Par | Timeframe | EA | Magic | Versão | Papel |
 |-----|-----------|----|-------|--------|-------|
 | XAUUSD | **M15** | **ScalpXAUUSD_v1** | 320930 | 1.05 | Daytrade ouro escada % (recomendado) |
+| XAUUSD | **M15** | **PatternXAUUSD_v1** | 320931 | 1.00 | A/B padrões candle (paralelo) |
 | EURUSD | M30 | TrendEURUSD_v1 | 260828 | 1.22 | Trend filtrado |
 | USDJPY | M5 | ScalpUSDJPY_v3 | 260831 | 3.03 | Pausado / referência |
 
@@ -84,6 +85,15 @@ O reset também reinicia a “época”: o PnL antigo deixa de ser somado (já e
 - Magic **320930**
 
 Instalação: copie `eas/nomo/ScalpXAUUSD_v1.mq5` → `MQL5/Experts/`, compile (F7). Gráfico **XAUUSD M15**. **Remova** e arraste de novo. Log: `v1.05`, `EMA=on`, `ADX>=22`, `break=4`.
+
+**PatternXAUUSD_v1** (experimento A/B — não altera o Scalp)
+- Mesmo DNA de risco (faixas, escada, META/STOP, sessão) · **entrada por padrões**
+- Padrões: **Three Outside Up/Down** · **Three White Soldiers / Black Crows** · **Engulfing**
+- Filtros: EMA **on** · ADX ≥ **20** · corpo ≥ **0,25×ATR** · vol ≥ **0,90×**
+- Magic **320931** · comment `PatternXAUUSD_v1`
+- Rode em **outro gráfico** XAUUSD M15 em paralelo; risco pode somar — desligue o pior
+
+Instalação: copie `eas/nomo/PatternXAUUSD_v1.mq5` → `MQL5/Experts/`, compile (F7). Novo gráfico **XAUUSD M15**. Log: `v1.00`, `magic=320931`, `padrões: engulf=on`.
 
 ### Demais EAs Nomo (referência)
 
@@ -121,6 +131,7 @@ eas/
     TrendWIN_v1.mq5       # Clear / WIN tendência (referência)
   nomo/
     ScalpXAUUSD_v1.mq5    # Nomo / XAUUSD escada % (recomendado)
+    PatternXAUUSD_v1.mq5  # Nomo / XAUUSD padrões candle (A/B)
     ScalpUSDJPY_v3.mq5    # USDJPY (pausado / referência)
     ScalpUSDJPY_v2.mq5
     TrendEURUSD_v1.mq5
