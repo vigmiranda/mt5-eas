@@ -2,6 +2,8 @@
 
 Repositório: [vigmiranda/mt5-eas](https://github.com/vigmiranda/mt5-eas)
 
+**Regras do projeto (valem em qualquer plataforma):** [`REGRAS.md`](REGRAS.md) · agentes: [`AGENTS.md`](AGENTS.md)
+
 Automação em **MetaTrader 5** para duas corretoras:
 
 | Pasta | Corretora | Mercado |
