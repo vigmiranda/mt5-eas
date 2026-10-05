@@ -33,6 +33,31 @@ Toda análise do que vamos implementar, ajustar ou descartar deve ser feita no *
 - Subir alvo de lucro **não** é o caminho preferido se isso aumenta exposição/tempo na operação.
 - Preferir seletividade (menos sinais, melhores) a “compensar” loss com mais operações.
 
+## 5. Mudança de entrada com evidência
+
+- Apertar ou afrouxar filtro de entrada só com base em **histórico, planilha ou logs**.
+- Um trade isolado (bom ou ruim) **não** basta para mudar regra de entrada.
+
+## 6. Uma mudança por vez
+
+- Em cada ciclo: alterar **entrada** **ou** **gestão** **ou** **sizing** — não os três juntos.
+- Misturar mudanças impede saber o que melhorou (ou piorou) a assertividade / meta.
+
+## 7. Payoff do dia
+
+- Um dia negativo **não pode** anular vários dias de meta.
+- STOP DIA, SL e volume devem ser coerentes com o capital: perda típica de um dia ruim ≤ ~1–1,5× um dia de meta.
+
+## 8. Corretora nova herda estas regras
+
+- Clear, Nomo ou qualquer plataforma futura **herdam** este documento por padrão.
+- Só documentar o que for específico da corretora (pasta, magic, fees, fuso, símbolo, capital virtual).
+
+## 9. Magic e comment únicos por EA
+
+- Cada EA tem **magic** e **comment** próprios.
+- Dois EAs no mesmo magic misturam histórico, A/B e gestão — **proibido**.
+
 ---
 
 ## Princípios já adotados (reforço)
