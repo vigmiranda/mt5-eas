@@ -15,53 +15,52 @@ Automação em **MetaTrader 5** para duas corretoras:
 
 | Ativo | Timeframe | EA | Magic | Versão | Papel |
 |-------|-----------|----|-------|--------|-------|
-| WINV26 / WIN$ | M5 | **ScalpWIN_v2** | 260917 | 2.10 | Daytrade escada % (recomendado) |
+| WINV26 / WIN$ | M5 | **ScalpWIN_v2** | 260917 | 2.11 | Daytrade escada % (recomendado) |
 | WINV26 / WIN$ | M5 | ScalpWIN_v1 | 260916 | 1.02 | Scalp TP/ATR (referência) |
 | WINV26 / WIN$ | M5 | TrendWIN_v1 | 260914 | 1.11 | Tendência (referência) |
 
 **ScalpWIN_v2** (preferido)
 - Rompimento M5 + EMA/ADX (entrada seletiva)
-- **Capital virtual (Clear):** semente + PnL novo − taxas (~R$0,25/lado)
-- **Faixas:** R$500–1500 → 1 · R$1500–2500 → 2 · …
-- **Filtros v2.06:** ADX ≥ 18, corpo ≥ 0,25×ATR, rompimento 3 barras, volume ≥ 0,85× média
+- **Capital virtual (Clear):** semente **R$5.353,45** (saldo Clear) + PnL novo − taxas (~R$0,25/lado)
+- **Faixas:** R$500–1500 → 1 · R$1500–2500 → 2 · … (com ~R$5353 → **vol≈5**)
+- **Filtros v2.11:** ADX ≥ **22** · corpo **0,40–1,30×ATR** · break **4** · vol ≥ **1,0×** · cooldown **6** barras após loss
 - Sessão **10:30–15:45**, flat **16:00**
-- Inputs renomeados no v2.05 para o MT5 **não reaproveitar** valores antigos salvos no gráfico
 - Histórico: `MQL5/Files/ScalpWIN_v2_equity.csv`
 - Escada: **+2% → 50%** · **+5% → +25%** · resto soft lock (1 contrato zera no L1)
-- SL folgado ATR, teto **5%** · **STOP DIA 10%** (inclui floating; pode flat)
-- **META DIA +3%:** só com conta **flat** e lucro **realizado** (não trava por floating)
-- v2.09: parcial L1/L2 **sem** fallback que zerava tudo (bug ret 10009)
-- v2.10: parcial confirma no **histórico** + **SAFETY com graça** (~4s) — não tira a proteção, só dá tempo da L1
+- SL folgado ATR, teto **5%** · **STOP DIA 10%** · **META DIA +3%** (flat+realizado)
+- v2.10: parcial confirma histórico + SAFETY com graça
+- v2.11: entrada mais seletiva (mitiga topo/chop) + semente alinhada à Clear
 
-Instalação: copie `eas/clear/ScalpWIN_v2.mq5` → `MQL5/Experts/`, compile (F7). **Remova** o EA do gráfico e arraste de novo. Log: `v2.10`, `SAFETY graça=4s`.
+Instalação: copie `eas/clear/ScalpWIN_v2.mq5` → `MQL5/Experts/`, compile (F7). **Remova** e arraste de novo (sem .set antigo). Log: `v2.11`, `semente R$5353.45`, `ADX>=22`, `break=4`.
 
 ### Capital virtual Clear — como funciona
 
 A Clear (B3) muitas vezes **não reporta** equity/balance confiável no MT5. Por isso o ScalpWIN_v2 usa **capital virtual**:
 
-`capital = semente (InpSeedBal) + PnL do magic depois da semente − taxas estimadas (+ floating)`
+`capital = semente (InpClearSaldo) + PnL do magic depois da semente − taxas estimadas (+ floating)`
 
 - A semente fica salva no terminal (GlobalVariable), não no saldo da corretora.
 - **Aporte na Clear não atualiza o EA sozinho** — é preciso regravar a semente (passo a passo abaixo).
 - Faixas de contratos, META DIA e STOP DIA usam esse capital virtual.
+- **v2.11** já vem com semente **R$5.353,45** (nova chave GV → aplica ao arrastar de novo).
 
 ### Aporte / atualizar semente (passo a passo)
 
 Quando depositar (ou quiser alinhar a semente ao saldo Clear atual):
 
-1. Veja o **saldo atual na Clear** (app/site), ex.: R$1.050  
+1. Veja o **saldo atual na Clear** (app/site), ex.: R$5.353,45  
 2. No gráfico, abra as propriedades do **ScalpWIN_v2**  
 3. Em **Volume / capital virtual**:
-   - `InpSeedBal` = saldo Clear atual (ex.: `1050`)  
+   - `InpClearSaldo` = saldo Clear atual  
    - `InpResetVirtualSeed` = **true**  
 4. Clique OK → **remova** o EA do gráfico → **arraste de novo** (sem .set antigo)  
-5. No log **Experts**, confira algo como: `ScalpWIN2: semente R$1050.00 a partir de …`  
+5. No log **Experts**, confira: `ScalpWIN2: semente R$5353.45 a partir de …`  
 6. Abra de novo as propriedades e volte `InpResetVirtualSeed` = **false**  
    (se deixar `true`, cada restart zera a época de novo)
 
 O reset também reinicia a “época”: o PnL antigo deixa de ser somado (já está refletido no saldo Clear) e o EA passa a contar só operações **depois** desse momento.
 
-**Saque:** mesma lógica — coloque em `InpSeedBal` o saldo Clear **após** o saque e use `InpResetVirtualSeed = true` uma vez.
+**Saque:** mesma lógica — coloque em `InpClearSaldo` o saldo Clear **após** o saque e use `InpResetVirtualSeed = true` uma vez.
 
 **ScalpWIN_v1** / **TrendWIN_v1**: referências anteriores.
 
