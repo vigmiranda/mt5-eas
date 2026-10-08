@@ -4,10 +4,10 @@
 //| Volume por capital | SL até 5% do capital | stop dia 10%          |
 //| Meta dia +3%: só com conta flat (lucro realizado)                |
 //| Sem teto de trades/dia | parciais: 2%→50% · 5%→+25% · resto trail |
-//| v2.11: entrada seletiva + semente Clear R$5353.45                |
+//| v2.12: STOP 5% + vol 0.95 + ADX20 + bank dia 2% (exceção multi)  |
 //+------------------------------------------------------------------+
 #property copyright "Vitor / mt5-eas"
-#property version   "2.11"
+#property version   "2.12"
 #property strict
 
 #include <Trade/Trade.mqh>
@@ -47,10 +47,12 @@ input bool   InpSaveDayHistory     = true;
 input string InpHistoryFile        = "ScalpWIN_v2_equity.csv";
 
 input group "=== Risco diário ==="
-input double InpDailyLossPercent   = 10.0;    // Para o dia se prejuízo >= X% do capital do dia
+input double InpStopDiaPct         = 5.0;     // STOP DIA % (era 10) — ~1 SL de 5 cts
 input bool   InpFlatOnDailyLoss    = true;    // true = fecha posições no STOP DIA
 input double InpDailyWinPercent    = 3.0;     // META DIA: lucro realizado >= X% (só se flat)
 input bool   InpUseDailyWinMeta    = true;    // true = ao bater meta (flat), não abre mais
+input double InpBankDiaPct         = 2.0;     // Protege o dia: realizado >= X% → sem novas entradas
+input bool   InpUseBankDia         = true;    // true = bank antecipado (evita devolver +155→-265)
 input int    InpMaxPositions       = 1;
 input int    InpMaxSpreadPoints    = 40;
 
@@ -62,19 +64,19 @@ input int    InpSessEndM           = 45;      // 15:45
 input int    InpFlatH              = 16;      // Flat 16:00
 input int    InpFlatM              = 0;
 
-input group "=== Entrada (rompimento) — seletiva v2.11 ==="
-input int    InpBreakBars          = 4;       // Rompimento M5 (era 3)
+input group "=== Entrada (rompimento) — seletiva v2.12 ==="
+input int    InpBreakBars          = 4;       // Rompimento M5
 input int    InpEMAFast            = 50;
 input int    InpEMASlow            = 200;
 input bool   InpUseEmaTrend        = true;
 input int    InpADXPeriod          = 14;
-input double InpAdxMin             = 22.0;    // ADX mínimo (era 18)
+input double InpAdxMin             = 20.0;    // ADX mínimo (meio-termo; era 22)
 input bool   InpUseADXFilter       = true;
-input double InpBodyMinAtr         = 0.40;    // Corpo mínimo × ATR (era 0.25)
+input double InpBodyMinAtr         = 0.40;    // Corpo mínimo × ATR
 input double InpBodyMaxAtr         = 1.30;    // Bloqueia vela esticada (topo/fundo de impulso)
 input bool   InpUseVolumeFilter    = true;
 input int    InpVolAvgBars         = 20;
-input double InpVolMin             = 1.00;    // Volume vs média (era 0.85)
+input double InpVolMinX            = 0.95;    // Volume vs média (era 1.00 — quase-sinais)
 input int    InpReentryBars        = 6;       // Após loss: sem novo sinal por N barras
 input ENUM_TIMEFRAMES InpTF        = PERIOD_M5;
 
@@ -395,7 +397,7 @@ void LogSkip(const string reason)
 double DailyLossLimitMoney()
 {
    double base = (g_dayStartEquity > 0.0 ? g_dayStartEquity : GetCapital());
-   return base * MathAbs(InpDailyLossPercent) / 100.0;
+   return base * MathAbs(InpStopDiaPct) / 100.0;
 }
 
 //+------------------------------------------------------------------+
@@ -591,6 +593,24 @@ bool DailyWinHit()
 }
 
 //+------------------------------------------------------------------+
+double DailyBankTargetMoney()
+{
+   double base = (g_dayStartEquity > 0.0 ? g_dayStartEquity : GetCapital());
+   return base * MathAbs(InpBankDiaPct) / 100.0;
+}
+
+//+------------------------------------------------------------------+
+// Protege o dia antes da META 3% (ex.: +2% realizado → não reabre e devolve)
+bool DailyBankHit()
+{
+   if(!InpUseBankDia || InpBankDiaPct <= 0.0) return false;
+   if(CountOurPositions() > 0) return false;
+   double target = DailyBankTargetMoney();
+   if(target <= 0.0) return false;
+   return (DayPnLRealizedMoney() >= target);
+}
+
+//+------------------------------------------------------------------+
 int CountOurPositions()
 {
    int n = 0;
@@ -782,10 +802,10 @@ bool VolumeOK(string &why)
    }
 
    double mult = (double)v1 / avg;
-   if(mult < InpVolMin)
+   if(mult < InpVolMinX)
    {
       why = StringFormat("volume fraco %.2fx < %.2fx (v=%I64d avg=%.0f)",
-                         mult, InpVolMin, v1, avg);
+                         mult, InpVolMinX, v1, avg);
       return false;
    }
    return true;
@@ -1418,9 +1438,14 @@ void UpdateChartComment()
 {
    string status;
    if(g_dayStopped)
-      status = StringFormat("STOP DIA %.0f%% (sem entradas)", InpDailyLossPercent);
+      status = StringFormat("STOP DIA %.0f%% (sem entradas)", InpStopDiaPct);
    else if(g_dayWinMeta)
-      status = StringFormat("META DIA %.0f%%", InpDailyWinPercent);
+   {
+      if(InpUseDailyWinMeta && DayPnLRealizedMoney() + 1e-8 >= DailyWinTargetMoney())
+         status = StringFormat("META DIA %.0f%%", InpDailyWinPercent);
+      else
+         status = StringFormat("BANK DIA %.0f%%", InpBankDiaPct);
+   }
    else if(SessionOpen(TimeTradeServer()))
       status = "SESSÃO";
    else
@@ -1429,7 +1454,7 @@ void UpdateChartComment()
    string ladder = StringFormat("L%d", g_ladderStep);
    string skip = (g_lastSkipReason != "" ? "\nskip: " + g_lastSkipReason : "");
    string txt = StringFormat(
-      "ScalpWIN v2.11 | %s\ncap R$%.0f (%s) seed R$%.0f | fees R$%.2f | vol≈%.0f\ndayPnL R$%.0f (real R$%.0f) | meta R$%.0f | spread %d | escada %s | %s%s",
+      "ScalpWIN v2.12 | %s\ncap R$%.0f (%s) seed R$%.0f | fees R$%.2f | vol≈%.0f\ndayPnL R$%.0f (real R$%.0f) | meta R$%.0f | spread %d | escada %s | %s%s",
       _Symbol,
       GetCapital(),
       g_capitalSource,
@@ -1487,8 +1512,14 @@ int OnInit()
       PrintFormat("ScalpWIN2: META DIA já ativa | realizado=R$%.2f | meta=R$%.2f (%.1f%%) → sem novas entradas",
                   DayPnLRealizedMoney(), DailyWinTargetMoney(), InpDailyWinPercent);
    }
+   else if(DailyBankHit())
+   {
+      g_dayWinMeta = true;
+      PrintFormat("ScalpWIN2: BANK DIA já ativo | realizado=R$%.2f | bank=R$%.2f (%.1f%%) → sem novas entradas",
+                  DayPnLRealizedMoney(), DailyBankTargetMoney(), InpBankDiaPct);
+   }
 
-   PrintFormat("ScalpWIN_v2.11 init | %s | capital=R$%.2f (%s) seed=R$%.2f realized=R$%.2f fees=R$%.2f | vol≈%.0f | magic=%I64d | tick=%.0f",
+   PrintFormat("ScalpWIN_v2.12 init | %s | capital=R$%.2f (%s) seed=R$%.2f realized=R$%.2f fees=R$%.2f | vol≈%.0f | magic=%I64d | tick=%.0f",
                _Symbol, GetCapital(), g_capitalSource, g_seedCapital, g_realizedAll, g_feesAll,
                CalcVolume(), InpMagic, TickSize());
    if(MathAbs(g_seedCapital - InpClearSaldo) > 0.5)
@@ -1501,15 +1532,16 @@ int OnInit()
    PrintFormat("sessao %02d:%02d-%02d:%02d flat %02d:%02d | break=%d ADX>=%.1f body %.2f-%.2fxATR | vol>=%.2f | cooldown=%d",
                InpSessStartH, InpSessStartM, InpSessEndH, InpSessEndM,
                InpFlatH, InpFlatM, InpBreakBars, InpAdxMin, InpBodyMinAtr, InpBodyMaxAtr,
-               InpVolMin, InpReentryBars);
-   PrintFormat("escada: %.1f%%→fecha %.0f%% | %.1f%%→fecha +%.0f%% | L3=%s | SL ATR=%.2fx teto %.1f%% cap | stopDia=%.1f%% | metaDia=%.1f%% (%s)",
+               InpVolMinX, InpReentryBars);
+   PrintFormat("escada: %.1f%%→fecha %.0f%% | %.1f%%→fecha +%.0f%% | L3=%s | SL ATR=%.2fx teto %.1f%% cap | stopDia=%.1f%% | metaDia=%.1f%% (%s) | bankDia=%.1f%% (%s)",
                InpLadder1_Pct, InpLadder1_CloseFrac * 100.0,
                InpLadder2_Pct, InpLadder2_CloseFrac * 100.0,
                (InpUseLadder3 ? "sim" : "nao/softlock"),
-               InpSL_ATR_Mult, InpMaxSL_CapitalPct, InpDailyLossPercent,
-               InpDailyWinPercent, (InpUseDailyWinMeta ? "on" : "off"));
-   PrintFormat("metaDia=só flat+realizado | parcial confirma histórico | SAFETY graça=%ds | softLock arm=%.2fxATR trail=%.2fxATR",
-               InpPartialGraceSec, InpSoftStart_ATR, InpTrail_ATR);
+               InpSL_ATR_Mult, InpMaxSL_CapitalPct, InpStopDiaPct,
+               InpDailyWinPercent, (InpUseDailyWinMeta ? "on" : "off"),
+               InpBankDiaPct, (InpUseBankDia ? "on" : "off"));
+   PrintFormat("metaDia=só flat+realizado | bankDia protege ~2%% | parcial+SAFETY graça=%ds | softLock arm=%.2fxATR",
+               InpPartialGraceSec, InpSoftStart_ATR);
    UpdateChartComment();
    return INIT_SUCCEEDED;
 }
@@ -1555,7 +1587,7 @@ void OnTick()
       if(!g_loggedDailyFlat)
       {
          PrintFormat("ScalpWIN2: STOP DIÁRIO %.1f%% | dayPnL=R$%.2f | limite=R$%.2f | base=R$%.2f → sem novas entradas",
-                     InpDailyLossPercent, DayPnLMoney(), DailyLossLimitMoney(), g_dayStartEquity);
+                     InpStopDiaPct, DayPnLMoney(), DailyLossLimitMoney(), g_dayStartEquity);
          g_loggedDailyFlat = true;
       }
       if(InpFlatOnDailyLoss && CountOurPositions() > 0)
@@ -1563,14 +1595,18 @@ void OnTick()
       return;
    }
 
-   // META DIA: só com flat + lucro realizado (não trava por floating)
-   if(g_dayWinMeta || DailyWinHit())
+   // META 3% ou BANK ~2%: flat + realizado → sem novas entradas (protege devolver lucro)
+   if(g_dayWinMeta || DailyWinHit() || DailyBankHit())
    {
       g_dayWinMeta = true;
       if(!g_loggedDailyWin)
       {
-         PrintFormat("ScalpWIN2: META DIA %.1f%% | realizado=R$%.2f | meta=R$%.2f | base=R$%.2f → sem novas entradas (flat+realizado)",
-                     InpDailyWinPercent, DayPnLRealizedMoney(), DailyWinTargetMoney(), g_dayStartEquity);
+         if(DailyWinHit())
+            PrintFormat("ScalpWIN2: META DIA %.1f%% | realizado=R$%.2f | meta=R$%.2f | base=R$%.2f → sem novas entradas",
+                        InpDailyWinPercent, DayPnLRealizedMoney(), DailyWinTargetMoney(), g_dayStartEquity);
+         else
+            PrintFormat("ScalpWIN2: BANK DIA %.1f%% | realizado=R$%.2f | bank=R$%.2f | base=R$%.2f → sem novas entradas (protege o dia)",
+                        InpBankDiaPct, DayPnLRealizedMoney(), DailyBankTargetMoney(), g_dayStartEquity);
          g_loggedDailyWin = true;
       }
       return;
