@@ -17,7 +17,7 @@ Automação em **MetaTrader 5** para duas corretoras:
 
 | Ativo | Timeframe | EA | Magic | Versão | Papel |
 |-------|-----------|----|-------|--------|-------|
-| WINV26 / WIN$ | M5 | **ScalpWIN_v2** | 260917 | 2.11 | Daytrade escada % (recomendado) |
+| WINV26 / WIN$ | M5 | **ScalpWIN_v2** | 260917 | 2.12 | Daytrade escada % (recomendado) |
 | WINV26 / WIN$ | M5 | ScalpWIN_v1 | 260916 | 1.02 | Scalp TP/ATR (referência) |
 | WINV26 / WIN$ | M5 | TrendWIN_v1 | 260914 | 1.11 | Tendência (referência) |
 
@@ -25,15 +25,15 @@ Automação em **MetaTrader 5** para duas corretoras:
 - Rompimento M5 + EMA/ADX (entrada seletiva)
 - **Capital virtual (Clear):** semente **R$5.353,45** (saldo Clear) + PnL novo − taxas (~R$0,25/lado)
 - **Faixas:** R$500–1500 → 1 · R$1500–2500 → 2 · … (com ~R$5353 → **vol≈5**)
-- **Filtros v2.11:** ADX ≥ **22** · corpo **0,40–1,30×ATR** · break **4** · vol ≥ **1,0×** · cooldown **6** barras após loss
+- **Filtros v2.12:** ADX ≥ **20** · corpo **0,40–1,30×ATR** · break **4** · vol ≥ **0,95×** · cooldown **6** barras
 - Sessão **10:30–15:45**, flat **16:00**
 - Histórico: `MQL5/Files/ScalpWIN_v2_equity.csv`
-- Escada: **+2% → 50%** · **+5% → +25%** · resto soft lock (1 contrato zera no L1)
-- SL folgado ATR, teto **5%** · **STOP DIA 10%** · **META DIA +3%** (flat+realizado)
-- v2.10: parcial confirma histórico + SAFETY com graça
-- v2.11: entrada mais seletiva (mitiga topo/chop) + semente alinhada à Clear
+- Escada: **+2% → 50%** · **+5% → +25%** · resto soft lock
+- SL folgado ATR, teto **5%** · **STOP DIA 5%** · **BANK DIA 2%** (protege) · **META 3%**
+- v2.12: vol 0,95 + STOP 5% + bank 2% (exceção multi-ajuste pós-análise histórico)
+- `.set` recomendado: `eas/clear/ScalpWIN_v2.set`
 
-Instalação: copie `eas/clear/ScalpWIN_v2.mq5` → `MQL5/Experts/`, compile (F7). **Remova** e arraste de novo (sem .set antigo). Log: `v2.11`, `semente R$5353.45`, `ADX>=22`, `break=4`.
+Instalação: copie `eas/clear/ScalpWIN_v2.mq5` (+ opcional `.set`) → `MQL5/Experts/`, F7. **Remova** e arraste de novo. Log: `v2.12`, `stopDia=5%`, `bankDia=2%`, `vol>=0.95`.
 
 ### Capital virtual Clear — como funciona
 

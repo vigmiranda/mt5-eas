@@ -1,0 +1,75 @@
+; ScalpWIN_v2.12 — recomendado (Clear WIN)
+; Carregar nas propriedades do EA ou conferir após F7 + arrastar de novo
+; === Volume / capital virtual ===
+InpSizingMode=0
+InpCapitalMode=0
+InpClearSaldo=5353.45
+InpBandStart=500.0
+InpBandWidth=1000.0
+InpFixedVolume=1.0
+InpMaxVolume=10.0
+InpMinCapitalTrade=500.0
+InpBrokerMinReliable=50.0
+InpIncludeFloating=true
+InpEstimateFees=true
+InpFeePerSide=0.25
+InpResetVirtualSeed=false
+InpSaveDayHistory=true
+InpHistoryFile=ScalpWIN_v2_equity.csv
+; === Risco diário ===
+InpStopDiaPct=5.0
+InpFlatOnDailyLoss=true
+InpDailyWinPercent=3.0
+InpUseDailyWinMeta=true
+InpBankDiaPct=2.0
+InpUseBankDia=true
+InpMaxPositions=1
+InpMaxSpreadPoints=40
+; === Sessão ===
+InpSessStartH=10
+InpSessStartM=30
+InpSessEndH=15
+InpSessEndM=45
+InpFlatH=16
+InpFlatM=0
+; === Entrada v2.12 ===
+InpBreakBars=4
+InpEMAFast=50
+InpEMASlow=200
+InpUseEmaTrend=true
+InpADXPeriod=14
+InpAdxMin=20.0
+InpUseADXFilter=true
+InpBodyMinAtr=0.4
+InpBodyMaxAtr=1.3
+InpUseVolumeFilter=true
+InpVolAvgBars=20
+InpVolMinX=0.95
+InpReentryBars=6
+InpTF=5
+; === Stop ===
+InpSL_ATR_Mult=1.5
+InpATRPeriod=14
+InpMaxSL_CapitalPct=5.0
+InpMinSL_Points=120
+InpMaxSL_Points=800
+; === Escada ===
+InpLadder1_Pct=2.0
+InpLadder1_CloseFrac=0.5
+InpLadder2_Pct=5.0
+InpLadder2_CloseFrac=0.25
+InpLadder3_Pct=8.0
+InpLadder3_CloseFrac=0.25
+InpUseLadder3=false
+InpPartialGraceSec=4
+; === Soft lock ===
+InpSoftStart_ATR=0.8
+InpSoftLock_ATR=0.3
+InpTrail_ATR=0.5
+InpSoftTightenAfter1=0.85
+InpSoftTightenAfter2=0.7
+; === Geral ===
+InpMagic=260917
+InpSlippagePoints=30
+InpTradeComment=ScalpWIN_v2
+InpVerboseLog=true
