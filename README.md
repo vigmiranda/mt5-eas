@@ -106,6 +106,15 @@ Instalação: copie `eas/nomo/PatternXAUUSD_v1.mq5` → `MQL5/Experts/`, compile
 | BTCUSD | H1 | TrendBTCUSD_v1 | 310903 | 1.10 |
 | WTIUSD | H1 | TrendWTIUSD_v1 | 310902 | 1.10 |
 | NMAI | H1 | NMAI_BuyDip_v1 | 310904 | 1.00 |
+| BTCUSD | M15+ | **Nomo_Futures_Grid_Bot** | 310940 | 1.00 | **EXPERIMENTAL grid** |
+
+**Nomo_Futures_Grid_Bot** (teste BTC ~US$300 — **fora das REGRAS** de “sem grid / 1 posição”)
+- Lote **0,01** · níveis **6** (teto 8) · faixa auto **±3%** do preço
+- BuyLimit abaixo / SellLimit acima · TP = 1 passo de grid
+- Fora da faixa: fecha posições + cancela pendentes
+- Magic **310940** · só para experimento; não misturar com Scalp/Trend no mesmo capital sem saber o risco
+
+Instalação: `eas/nomo/Nomo_Futures_Grid_Bot.mq5` → `MQL5/Experts/`, F7, gráfico **BTCUSD**. Log: `GridBTC EXP v1.00`, `lot=0.01`.
 
 Arquivos em `eas/nomo/`. Legados em `eas/nomo/archive/`.
 
