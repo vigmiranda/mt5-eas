@@ -17,46 +17,46 @@ Automação em **MetaTrader 5** para duas corretoras:
 
 | Ativo | Timeframe | EA | Magic | Versão | Papel |
 |-------|-----------|----|-------|--------|-------|
-| WINV26 / WIN$ | M5 | **ScalpWIN_v2** | 260917 | 2.12 | Daytrade escada % (recomendado) |
+| WINV26 / WIN$ | M5 | **OpenBreakWIN_v1** | 260918 | 1.00 | **Opening Breakout (ativo)** |
+| WINV26 / WIN$ | M5 | ScalpWIN_v2 | 260917 | 2.12 | Pausado no real (referência) |
 | WINV26 / WIN$ | M5 | ScalpWIN_v1 | 260916 | 1.02 | Scalp TP/ATR (referência) |
 | WINV26 / WIN$ | M5 | TrendWIN_v1 | 260914 | 1.11 | Tendência (referência) |
 
-**ScalpWIN_v2** (preferido)
-- Rompimento M5 + EMA/ADX (entrada seletiva)
-- **Capital virtual (Clear):** semente **R$5.353,45** (saldo Clear) + PnL novo − taxas (~R$0,25/lado)
-- **Faixas:** R$500–1500 → 1 · R$1500–2500 → 2 · … (com ~R$5353 → **vol≈5**)
-- **Filtros v2.12:** ADX ≥ **20** · corpo **0,40–1,30×ATR** · break **4** · vol ≥ **0,95×** · cooldown **6** barras
-- Sessão **10:30–15:45**, flat **16:00**
-- Histórico: `MQL5/Files/ScalpWIN_v2_equity.csv`
-- Escada: **+2% → 50%** · **+5% → +25%** · resto soft lock
-- SL folgado ATR, teto **5%** · **STOP DIA 5%** · **BANK DIA 2%** (protege) · **META 3%**
-- v2.12: vol 0,95 + STOP 5% + bank 2% (exceção multi-ajuste pós-análise histórico)
-- `.set` recomendado: `eas/clear/ScalpWIN_v2.set`
+**OpenBreakWIN_v1** (ativo no real — ScalpWIN pausado)
+- **Opening Range Breakout:** monta o caixote **09:00–09:15**, entra no rompimento com volume até **10:30**
+- **Sem META DIA 3%** — busca o máximo da pernada da manhã com **BE (150 pts)** + **trail ATR**
+- Flat forçado **11:00** · **1 trade/dia** · **STOP DIA 5%**
+- SL do outro lado da caixa (fallback ATR) · teto SL **5%** do capital
+- **Capital virtual Clear:** semente `InpClearSaldo` + PnL do magic − taxas
+- Magic **260918** · Histórico: `MQL5/Files/OpenBreakWIN_v1_equity.csv`
 
-Instalação: copie `eas/clear/ScalpWIN_v2.mq5` (+ opcional `.set`) → `MQL5/Experts/`, F7. **Remova** e arraste de novo. Log: `v2.12`, `stopDia=5%`, `bankDia=2%`, `vol>=0.95`.
+Instalação: copie `eas/clear/OpenBreakWIN_v1.mq5` → `MQL5/Experts/`, F7. **Remova o ScalpWIN** do gráfico, arraste o OpenBreak. Log: `OpenBreakWIN_v1.00`, `SEM meta dia`, `caixa 09:00–09:15`.
+
+**ScalpWIN_v2** (pausado — não usar em paralelo no mesmo capital)
+- Rompimento M5 + EMA/ADX + escada % · sessão 10:30–15:45 · META 3% / BANK 2% / STOP 5%
+- Mantido no repo só como referência / possível retorno futuro
 
 ### Capital virtual Clear — como funciona
 
-A Clear (B3) muitas vezes **não reporta** equity/balance confiável no MT5. Por isso o ScalpWIN_v2 usa **capital virtual**:
+A Clear (B3) muitas vezes **não reporta** equity/balance confiável no MT5. Por isso os EAs Clear usam **capital virtual**:
 
 `capital = semente (InpClearSaldo) + PnL do magic depois da semente − taxas estimadas (+ floating)`
 
 - A semente fica salva no terminal (GlobalVariable), não no saldo da corretora.
 - **Aporte na Clear não atualiza o EA sozinho** — é preciso regravar a semente (passo a passo abaixo).
-- Faixas de contratos, META DIA e STOP DIA usam esse capital virtual.
-- **v2.11** já vem com semente **R$5.353,45** (nova chave GV → aplica ao arrastar de novo).
+- Faixas de contratos e STOP DIA usam esse capital virtual.
 
 ### Aporte / atualizar semente (passo a passo)
 
 Quando depositar (ou quiser alinhar a semente ao saldo Clear atual):
 
 1. Veja o **saldo atual na Clear** (app/site), ex.: R$5.353,45  
-2. No gráfico, abra as propriedades do **ScalpWIN_v2**  
+2. No gráfico, abra as propriedades do **OpenBreakWIN_v1**  
 3. Em **Volume / capital virtual**:
    - `InpClearSaldo` = saldo Clear atual  
    - `InpResetVirtualSeed` = **true**  
-4. Clique OK → **remova** o EA do gráfico → **arraste de novo** (sem .set antigo)  
-5. No log **Experts**, confira: `ScalpWIN2: semente R$5353.45 a partir de …`  
+4. Clique OK → **remova** o EA do gráfico → **arraste de novo**  
+5. No log **Experts**, confira: `OpenBreak: semente R$5353.45 a partir de …`  
 6. Abra de novo as propriedades e volte `InpResetVirtualSeed` = **false**  
    (se deixar `true`, cada restart zera a época de novo)
 
@@ -64,7 +64,7 @@ O reset também reinicia a “época”: o PnL antigo deixa de ser somado (já e
 
 **Saque:** mesma lógica — coloque em `InpClearSaldo` o saldo Clear **após** o saque e use `InpResetVirtualSeed = true` uma vez.
 
-**ScalpWIN_v1** / **TrendWIN_v1**: referências anteriores.
+**ScalpWIN_v1** / **TrendWIN_v1** / **ScalpWIN_v2**: referências.
 
 ---
 
@@ -139,7 +139,8 @@ Tendência + ADX + SL por ATR, **sem TP fixo**. Soft lock arma depois de X ATR d
 ```
 eas/
   clear/
-    ScalpWIN_v2.mq5       # Clear / WIN escada % (recomendado)
+    OpenBreakWIN_v1.mq5   # Clear / WIN opening breakout (ativo)
+    ScalpWIN_v2.mq5       # Clear / WIN escada % (pausado)
     ScalpWIN_v1.mq5       # Clear / WIN scalp TP (referência)
     TrendWIN_v1.mq5       # Clear / WIN tendência (referência)
   nomo/
