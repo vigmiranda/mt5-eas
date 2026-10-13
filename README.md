@@ -17,7 +17,8 @@ Automação em **MetaTrader 5** para duas corretoras:
 
 | Ativo | Timeframe | EA | Magic | Versão | Papel |
 |-------|-----------|----|-------|--------|-------|
-| WINV26 / WIN$ | M5 | **OpenBreakWIN_v1** | 260918 | 1.00 | **Opening Breakout (ativo)** |
+| WINV26 / WIN$ | M5 | **OpenBreakWIN_v1** | 260918 | 1.00 | **Opening Breakout manhã (ativo)** |
+| WINV26 / WIN$ | M5 | **PullbackWIN_v1** | 260919 | 1.00 | **Pullback EMA tarde (ativo)** |
 | WINV26 / WIN$ | M5 | ScalpWIN_v2 | 260917 | 2.12 | Pausado no real (referência) |
 | WINV26 / WIN$ | M5 | ScalpWIN_v1 | 260916 | 1.02 | Scalp TP/ATR (referência) |
 | WINV26 / WIN$ | M5 | TrendWIN_v1 | 260914 | 1.11 | Tendência (referência) |
@@ -31,6 +32,16 @@ Automação em **MetaTrader 5** para duas corretoras:
 - Magic **260918** · Histórico: `MQL5/Files/OpenBreakWIN_v1_equity.csv`
 
 Instalação: copie `eas/clear/OpenBreakWIN_v1.mq5` → `MQL5/Experts/`, F7. **Remova o ScalpWIN** do gráfico, arraste o OpenBreak. Log: `OpenBreakWIN_v1.00`, `SEM meta dia`, `caixa 09:00–09:15`.
+
+**PullbackWIN_v1** (ativo — complementa OpenBreak após 11:00)
+- Pullback **EMA20/50** no M5 → rompe high/low do candle de sinal (+5 pts) · TP **2R** · SL no outro lado do candle
+- Sessão **11:05–15:45**, flat **16:00** (OpenBreak já flatou às 11:00)
+- **1 contrato** fixo (default) — não empilha volume com o OpenBreak
+- Máx. **3** trades/dia · **STOP DIA 5%** · capital virtual Clear
+- Magic **260919** · Histórico: `MQL5/Files/PullbackWIN_v1_equity.csv`
+- Telinha/Comment no padrão do projeto + logs `Pullback:`
+
+Instalação: `eas/clear/PullbackWIN_v1.mq5` → F7. Pode rodar no **mesmo gráfico** ou em outro WIN M5; magic diferente. Log: `PullbackWIN_v1.00`, `após OpenBreak`.
 
 **ScalpWIN_v2** (pausado — não usar em paralelo no mesmo capital)
 - Rompimento M5 + EMA/ADX + escada % · sessão 10:30–15:45 · META 3% / BANK 2% / STOP 5%
@@ -139,7 +150,8 @@ Tendência + ADX + SL por ATR, **sem TP fixo**. Soft lock arma depois de X ATR d
 ```
 eas/
   clear/
-    OpenBreakWIN_v1.mq5   # Clear / WIN opening breakout (ativo)
+    OpenBreakWIN_v1.mq5   # Clear / WIN opening breakout manhã
+    PullbackWIN_v1.mq5    # Clear / WIN pullback EMA tarde
     ScalpWIN_v2.mq5       # Clear / WIN escada % (pausado)
     ScalpWIN_v1.mq5       # Clear / WIN scalp TP (referência)
     TrendWIN_v1.mq5       # Clear / WIN tendência (referência)
