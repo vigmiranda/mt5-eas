@@ -700,8 +700,8 @@ int OnInit()
    PrintFormat("Pullback: sessão %02d:%02d–%02d:%02d | flat %02d:%02d | STOP DIA %.1f%% | maxTrades=%d | R:R=%.1f",
                InpSessStartH, InpSessStartM, InpSessEndH, InpSessEndM,
                InpFlatH, InpFlatM, InpStopDiaPct, InpMaxTradesDay, InpRewardRisk);
-   PrintFormat("Pullback: complemento do OpenBreak — não entra antes das 11:05 | volume default fixo %.0f",
-               InpFixedVolume);
+   PrintFormat("Pullback: complemento OpenBreak | entra a partir de %02d:%02d | volume default fixo %.0f",
+               InpSessStartH, InpSessStartM, InpFixedVolume);
    UpdateChartComment();
    return INIT_SUCCEEDED;
 }
