@@ -18,7 +18,7 @@ Automação em **MetaTrader 5** para duas corretoras:
 | Ativo | Timeframe | EA | Magic | Versão | Papel |
 |-------|-----------|----|-------|--------|-------|
 | WINV26 / WIN$ | M5 | **OpenBreakWIN_v1** | 260918 | 1.00 | **Opening Breakout manhã (ativo)** |
-| WINV26 / WIN$ | M5 | **PullbackWIN_v1** | 260919 | 1.00 | **Pullback EMA tarde (ativo)** |
+| WINV26 / WIN$ | M5 | **PullbackWIN_v1** | 260919 | 1.01 | **Pullback EMA tarde (ativo)** |
 | WINV26 / WIN$ | M5 | ScalpWIN_v2 | 260917 | 2.12 | Pausado no real (referência) |
 | WINV26 / WIN$ | M5 | ScalpWIN_v1 | 260916 | 1.02 | Scalp TP/ATR (referência) |
 | WINV26 / WIN$ | M5 | TrendWIN_v1 | 260914 | 1.11 | Tendência (referência) |
@@ -41,7 +41,7 @@ Instalação: copie `eas/clear/OpenBreakWIN_v1.mq5` → `MQL5/Experts/`, F7. **R
 - Magic **260919** · Histórico: `MQL5/Files/PullbackWIN_v1_equity.csv`
 - Telinha/Comment no padrão do projeto + logs `Pullback:`
 
-Instalação: `eas/clear/PullbackWIN_v1.mq5` → F7. Pode rodar no **mesmo gráfico** ou em outro WIN M5; magic diferente. Log: `PullbackWIN_v1.00`, `após OpenBreak`.
+Instalação: `eas/clear/PullbackWIN_v1.mq5` → F7. Pode rodar no **mesmo gráfico** ou em outro WIN M5; magic diferente. Log: `PullbackWIN_v1.01`, `após OpenBreak`.
 
 **ScalpWIN_v2** (pausado — não usar em paralelo no mesmo capital)
 - Rompimento M5 + EMA/ADX + escada % · sessão 10:30–15:45 · META 3% / BANK 2% / STOP 5%
