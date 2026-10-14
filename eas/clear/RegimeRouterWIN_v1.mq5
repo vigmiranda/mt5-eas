@@ -4,10 +4,10 @@
 //| R1 Abertura OK → OpenBreak | R2 Explosiva → fora ORB, tarde se R3|
 //| R3 Tendência → Pullback | R4 Lateral → mean-reversion 1 ct       |
 //| STOP DIA 5% único | logs ricos | telinha detalhada               |
-//| v1.00                                                             |
+//| v1.01: log a cada barra M5 (entrou / não entrou + motivo)         |
 //+------------------------------------------------------------------+
 #property copyright "Vitor / mt5-eas"
-#property version   "1.00"
+#property version   "1.01"
 #property strict
 
 #include <Trade/Trade.mqh>
@@ -115,6 +115,7 @@ datetime g_dayStart = 0;
 double   g_dayStartEquity = 0.0;
 datetime g_lastBarOB = 0;
 datetime g_lastBarAft = 0;
+datetime g_lastStatusBar = 0; // pulse de log a cada M5
 bool     g_dayStopped = false;
 bool     g_loggedDailyFlat = false;
 int      g_tradesToday = 0;
@@ -210,13 +211,50 @@ void LogWhy(const string msg)
 void LogSkip(const string msg)
 {
    g_lastSkip = msg;
-   datetime now = TimeTradeServer();
-   // Evita spam: mesmo skip no máximo 1x por minuto
-   if(InpVerboseLog && (now - g_lastSkipLog >= 60 || StringFind(msg, "STOP") >= 0 || StringFind(msg, "REGIME") >= 0))
-   {
-      g_lastSkipLog = now;
+   // Sempre registra (barra M5 já limita a frequência via módulos / pulse)
+   if(InpVerboseLog)
       PrintFormat("Router: SKIP | %s", msg);
-   }
+}
+
+//+------------------------------------------------------------------+
+// Log a cada nova barra M5 — igual ao acompanhamento antigo (5 em 5 min)
+void LogBarPulse(const datetime now)
+{
+   datetime bar0 = iTime(_Symbol, InpTF, 0);
+   if(bar0 == 0 || bar0 == g_lastStatusBar)
+      return;
+   g_lastStatusBar = bar0;
+
+   if(!InpVerboseLog)
+      return;
+
+   string decision = "";
+   if(g_dayStopped || g_regime == REG_RISCO_DIA)
+      decision = "NÃO OPERA — STOP DIA";
+   else if(g_activeMod == MOD_NONE)
+      decision = "NÃO OPERA — sem módulo neste regime/janela";
+   else if(CountOurPositions() > 0)
+      decision = "EM POSIÇÃO — gestão ativa (sem nova entrada)";
+   else if(g_tradesToday >= InpMaxTradesDay)
+      decision = "NÃO OPERA — max trades do dia";
+   else
+      decision = StringFormat("AGUARDANDO SINAL — módulo %s", ModuleName(g_activeMod));
+
+   string last = (g_lastSkip != "" ? g_lastSkip : g_lastAction);
+   PrintFormat(
+      "Router: M5 %s | REGIME=%s | módulo=%s | %s | %s | caixa=%.0fpts%s | ADX=%.1f EMA%.0f/%.0f | dayPnL=R$%.0f | trades=%d/%d (OB=%d PB=%d MR=%d) | detalhe: %s",
+      TimeToString(bar0, TIME_MINUTES),
+      RegimeName(g_regime),
+      ModuleName(g_activeMod),
+      decision,
+      g_regimeWhy,
+      g_boxPts,
+      (g_r2Day ? " R2" : (g_boxReady ? " OK" : " …")),
+      g_adx, g_emaFast, g_emaSlow,
+      DayPnLMoney(),
+      g_tradesToday, InpMaxTradesDay, g_tradesOB, g_tradesPB, g_tradesMR,
+      last
+   );
 }
 
 //+------------------------------------------------------------------+
@@ -549,6 +587,7 @@ void ResetDayIfNeeded()
    g_pbConsumed = false;
    g_lastBarOB = 0;
    g_lastBarAft = 0;
+   g_lastStatusBar = 0;
 
    LogWhy(StringFormat("NOVO DIA | capital start R$%.2f | STOP DIA %.1f%% = R$%.0f | vol=%.0f magic=%I64d",
                        g_dayStartEquity, InpStopDiaPct, DailyLossLimitMoney(), CalcVolume(), InpMagic));
@@ -1108,7 +1147,7 @@ void UpdateChartComment()
       sinal = "MR aguarda fechamento na banda";
 
    string txt = StringFormat(
-      "RegimeRouterWIN v1.00 | %s\n"
+      "RegimeRouterWIN v1.01 | %s\n"
       "REGIME: %s\n"
       "porque: %s\n"
       "módulo: %s | %s\n"
@@ -1163,7 +1202,8 @@ int OnInit()
    ResetDayIfNeeded();
    RefreshIndicators();
 
-   Print("========== RegimeRouterWIN v1.00 ==========");
+   Print("========== RegimeRouterWIN v1.01 ==========");
+   Print("Router: log a cada barra M5 (Router: M5 …) + SKIP/ENTRADA com motivo");
    PrintFormat("capital=R$%.2f seed=R$%.2f vol=%.0f magic=%I64d STOP DIA=%.1f%%",
                GetCapital(), g_seedCapital, CalcVolume(), InpMagic, InpStopDiaPct);
    PrintFormat("R1 caixa [%g–%g] pts | OB entry até %02d:%02d flat %02d:%02d",
@@ -1200,6 +1240,7 @@ void OnTick()
    RefreshIndicators();
    ClassifyRegime(now);
    LogRegimeChange();
+   LogBarPulse(now); // a cada 5 min: regime + se opera/não + motivo
    UpdateChartComment();
 
    if(!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) || !MQLInfoInteger(MQL_TRADE_ALLOWED))
