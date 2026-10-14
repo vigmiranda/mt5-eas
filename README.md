@@ -17,65 +17,45 @@ Automação em **MetaTrader 5** para duas corretoras:
 
 | Ativo | Timeframe | EA | Magic | Versão | Papel |
 |-------|-----------|----|-------|--------|-------|
-| WINV26 / WIN$ | M5 | **OpenBreakWIN_v1** | 260918 | 1.00 | **Opening Breakout manhã (ativo)** |
-| WINV26 / WIN$ | M5 | **PullbackWIN_v1** | 260919 | 1.01 | **Pullback EMA tarde (ativo)** |
-| WINV26 / WIN$ | M5 | ScalpWIN_v2 | 260917 | 2.12 | Pausado no real (referência) |
-| WINV26 / WIN$ | M5 | ScalpWIN_v1 | 260916 | 1.02 | Scalp TP/ATR (referência) |
-| WINV26 / WIN$ | M5 | TrendWIN_v1 | 260914 | 1.11 | Tendência (referência) |
+| WINV26 / WIN$ | M5 | **RegimeRouterWIN_v1** | 260920 | 1.00 | **Único EA ativo (roteador de regimes)** |
 
-**OpenBreakWIN_v1** (ativo no real — ScalpWIN pausado)
-- **Opening Range Breakout:** monta o caixote **09:00–09:15**, entra no rompimento com volume até **10:30**
-- **Sem META DIA 3%** — busca o máximo da pernada da manhã com **BE (150 pts)** + **trail ATR**
-- Flat forçado **11:00** · **1 trade/dia** · **STOP DIA 5%**
-- SL do outro lado da caixa (fallback ATR) · teto SL **5%** do capital
-- **Capital virtual Clear:** semente `InpClearSaldo` + PnL do magic − taxas
-- Magic **260918** · Histórico: `MQL5/Files/OpenBreakWIN_v1_equity.csv`
+EAs anteriores (OpenBreak, Pullback, ScalpWIN, TrendWIN) estão em [`eas/clear/archive/`](eas/clear/archive/) — **não usar no real**.
 
-Instalação: copie `eas/clear/OpenBreakWIN_v1.mq5` → `MQL5/Experts/`, F7. **Remova o ScalpWIN** do gráfico, arraste o OpenBreak. Log: `OpenBreakWIN_v1.00`, `SEM meta dia`, `caixa 09:00–09:15`.
+**RegimeRouterWIN_v1** — um EA, vários regimes
+- **R1 ABERTURA_OK** (caixa 80–1200 pts): módulo OpenBreak manhã (até 10:30, flat 11:00, BE+trail)
+- **R2 EXPLOSIVA** (caixa inválida): sem ORB; tarde só Pullback se virar **R3**; senão fora
+- **R3 TENDÊNCIA** (ADX≥20 + EMAs alinhadas): Pullback 1 trade, TP 2R
+- **R4 LATERAL** (ADX≤18, e não R2): Mean-reversion Bollinger, **1 contrato**, 1 trade
+- **RISCO_DIA**: STOP **5%** único (todos os módulos) → flat + bloqueio
+- Capital virtual Clear · volume default **1** · logs ricos `Router:` · telinha com regime/módulo/porque
+- Magic **260920** · Histórico: `MQL5/Files/RegimeRouterWIN_v1_equity.csv`
 
-**PullbackWIN_v1** (ativo — complementa OpenBreak após 11:00)
-- Pullback **EMA20/50** no M5 → rompe high/low do candle de sinal (+5 pts) · TP **2R** · SL no outro lado do candle
-- Sessão **11:05–15:45**, flat **16:00** (OpenBreak já flatou às 11:00)
-- **1 contrato** fixo (default) — não empilha volume com o OpenBreak
-- Máx. **3** trades/dia · **STOP DIA 5%** · capital virtual Clear
-- Magic **260919** · Histórico: `MQL5/Files/PullbackWIN_v1_equity.csv`
-- Telinha/Comment no padrão do projeto + logs `Pullback:`
-
-Instalação: `eas/clear/PullbackWIN_v1.mq5` → F7. Pode rodar no **mesmo gráfico** ou em outro WIN M5; magic diferente. Log: `PullbackWIN_v1.01`, `após OpenBreak`.
-
-**ScalpWIN_v2** (pausado — não usar em paralelo no mesmo capital)
-- Rompimento M5 + EMA/ADX + escada % · sessão 10:30–15:45 · META 3% / BANK 2% / STOP 5%
-- Mantido no repo só como referência / possível retorno futuro
+**Instalação**
+1. Remova qualquer EA antigo do gráfico WIN (OpenBreak/Pullback/Scalp…)
+2. Copie `eas/clear/RegimeRouterWIN_v1.mq5` → `MQL5/Experts/` → **F7**
+3. Arraste no **WIN M5**, Algotrading ON
+4. Log: `RegimeRouterWIN v1.00` + linhas `REGIME …` / `ENTRADA …`
+5. Telinha: `REGIME: R1_…` / `módulo:` / `porque:` / dayPnL / trades OB/PB/MR
 
 ### Capital virtual Clear — como funciona
 
-A Clear (B3) muitas vezes **não reporta** equity/balance confiável no MT5. Por isso os EAs Clear usam **capital virtual**:
+A Clear (B3) muitas vezes **não reporta** equity/balance confiável no MT5. Por isso o RegimeRouter usa **capital virtual**:
 
 `capital = semente (InpClearSaldo) + PnL do magic depois da semente − taxas estimadas (+ floating)`
 
-- A semente fica salva no terminal (GlobalVariable), não no saldo da corretora.
-- **Aporte na Clear não atualiza o EA sozinho** — é preciso regravar a semente (passo a passo abaixo).
-- Faixas de contratos e STOP DIA usam esse capital virtual.
+- A semente fica salva no terminal (GlobalVariable).
+- **Aporte na Clear não atualiza o EA sozinho** — regrave a semente (abaixo).
+- STOP DIA 5% usa esse capital virtual.
 
 ### Aporte / atualizar semente (passo a passo)
 
-Quando depositar (ou quiser alinhar a semente ao saldo Clear atual):
+1. Saldo atual na Clear (app/site)  
+2. Propriedades do **RegimeRouterWIN_v1** → `InpClearSaldo` + `InpResetVirtualSeed=true`  
+3. OK → remova o EA → arraste de novo  
+4. Log: `Router: semente capital R$…`  
+5. Volte `InpResetVirtualSeed=false`
 
-1. Veja o **saldo atual na Clear** (app/site), ex.: R$5.353,45  
-2. No gráfico, abra as propriedades do **OpenBreakWIN_v1**  
-3. Em **Volume / capital virtual**:
-   - `InpClearSaldo` = saldo Clear atual  
-   - `InpResetVirtualSeed` = **true**  
-4. Clique OK → **remova** o EA do gráfico → **arraste de novo**  
-5. No log **Experts**, confira: `OpenBreak: semente R$5353.45 a partir de …`  
-6. Abra de novo as propriedades e volte `InpResetVirtualSeed` = **false**  
-   (se deixar `true`, cada restart zera a época de novo)
-
-O reset também reinicia a “época”: o PnL antigo deixa de ser somado (já está refletido no saldo Clear) e o EA passa a contar só operações **depois** desse momento.
-
-**Saque:** mesma lógica — coloque em `InpClearSaldo` o saldo Clear **após** o saque e use `InpResetVirtualSeed = true` uma vez.
-
-**ScalpWIN_v1** / **TrendWIN_v1** / **ScalpWIN_v2**: referências.
+**Arquivo:** `eas/clear/archive/` = referências antigas.
 
 ---
 
@@ -150,11 +130,8 @@ Tendência + ADX + SL por ATR, **sem TP fixo**. Soft lock arma depois de X ATR d
 ```
 eas/
   clear/
-    OpenBreakWIN_v1.mq5   # Clear / WIN opening breakout manhã
-    PullbackWIN_v1.mq5    # Clear / WIN pullback EMA tarde
-    ScalpWIN_v2.mq5       # Clear / WIN escada % (pausado)
-    ScalpWIN_v1.mq5       # Clear / WIN scalp TP (referência)
-    TrendWIN_v1.mq5       # Clear / WIN tendência (referência)
+    RegimeRouterWIN_v1.mq5  # Clear / WIN roteador de regimes (ativo)
+    archive/                # EAs antigos (não usar no real)
   nomo/
     ScalpXAUUSD_v1.mq5    # Nomo / XAUUSD escada % (recomendado)
     PatternXAUUSD_v1.mq5  # Nomo / XAUUSD padrões candle (A/B)
