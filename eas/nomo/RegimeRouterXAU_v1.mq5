@@ -265,11 +265,12 @@ double ClampVolume(const double v)
    double step = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
    double vmin = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
    double vmax = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
-   if(step <= 0.0) step = 1.0;
+   if(step <= 0.0) step = 0.01;
+   if(vmin <= 0.0) vmin = 0.01;
    vol = MathFloor(vol / step + 1e-8) * step;
    if(vol < vmin) vol = 0.0;
-   if(vol > vmax) vol = vmax;
-   return vol;
+   if(vol > vmax && vmax > 0.0) vol = vmax;
+   return NormalizeDouble(vol, 2);
 }
 
 //+------------------------------------------------------------------+
