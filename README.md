@@ -61,55 +61,20 @@ A Clear (B3) muitas vezes **não reporta** equity/balance confiável no MT5. Por
 
 ## Nomo (layout recomendado)
 
-| Par | Timeframe | EA | Magic | Versão | Papel |
-|-----|-----------|----|-------|--------|-------|
-| XAUUSD | **M15** | **ScalpXAUUSD_v1** | 320930 | 1.05 | Daytrade ouro escada % (recomendado) |
-| XAUUSD | **M15** | **PatternXAUUSD_v1** | 320931 | 1.00 | A/B padrões candle (paralelo) |
-| EURUSD | M30 | TrendEURUSD_v1 | 260828 | 1.22 | Trend filtrado |
-| USDJPY | M5 | ScalpUSDJPY_v3 | 260831 | 3.03 | Pausado / referência |
+| Ativo | Timeframe | EA | Magic | Versão | Papel |
+|-------|-----------|----|-------|--------|-------|
+| XAUUSD | **M15** | **RegimeRouterXAU_v1** | 320932 | 1.00 | **Único EA ativo Nomo (roteador)** |
 
-**ScalpXAUUSD_v1** (preferido na Nomo)
-- DNA **ScalpWIN**: rompimento + ADX + escada + soft lock · **sem grid/martingale** (1 posição)
-- **Faixas de lote:** US$200–500 → **0,01** · 500–800 → **0,02** · 800–1100 → **0,03** · (+US$300 → +0,01)
-- **META DIA +3%** (flat + realizado) · **STOP DIA 5%** · **sem teto** de trades/dia
-- Escada: **+0,5% → zera micro-lote** (~US$1,50 em ~300) · **+1% → L2** · soft lock **0,5×ATR**
-- Filtros **v1.05 (apertados):** EMA **on** · ADX ≥ **22** · corpo ≥ **0,40×ATR** · break **4** · vol ≥ **1,0×**
-- Sessão **13:00–19:00 GMT** · flat **21:00 GMT** · **só seg–sex** · M15
-- Magic **320930**
+Demais EAs Nomo (ScalpXAU, Pattern, Trend*, Grid BTC, etc.) estão em [`eas/nomo/archive/`](eas/nomo/archive/) — **não usar no real**.
 
-Instalação: copie `eas/nomo/ScalpXAUUSD_v1.mq5` → `MQL5/Experts/`, compile (F7). Gráfico **XAUUSD M15**. **Remova** e arraste de novo. Log: `v1.05`, `EMA=on`, `ADX>=22`, `break=4`.
+**RegimeRouterXAU_v1** — ouro, mesma lógica de regimes do WIN
+- Saldo seed/fallback **US$254** · lote fixo **0,01** · STOP DIA **5%** (~US$12,70)
+- Sessão **GMT** (servidor Nomo): caixa Londres **13:00–13:30** · OB até **15:00** · tarde **16:05–19:00** · flat **21:00** · só dias úteis
+- **R1** caixa OK → OpenBreak · **R2** explosiva → sem ORB, tarde só se R3 · **R3** Pullback · **R4** MeanRev BB
+- Logs `Router: M15 …` a cada barra + telinha com regime/módulo/porque
+- Magic **320932**
 
-**PatternXAUUSD_v1** (experimento A/B — não altera o Scalp)
-- Mesmo DNA de risco (faixas, escada, META/STOP, sessão) · **entrada por padrões**
-- Padrões: **Three Outside Up/Down** · **Three White Soldiers / Black Crows** · **Engulfing**
-- Filtros: EMA **on** · ADX ≥ **20** · corpo ≥ **0,25×ATR** · vol ≥ **0,90×**
-- Magic **320931** · comment `PatternXAUUSD_v1`
-- Rode em **outro gráfico** XAUUSD M15 em paralelo; risco pode somar — desligue o pior
-
-Instalação: copie `eas/nomo/PatternXAUUSD_v1.mq5` → `MQL5/Experts/`, compile (F7). Novo gráfico **XAUUSD M15**. Log: `v1.00`, `magic=320931`, `padrões: engulf=on`.
-
-### Demais EAs Nomo (referência)
-
-| Par | Timeframe | EA | Magic | Versão |
-|-----|-----------|----|-------|--------|
-| XRPUSD | M30 | TrendXRPUSD_v1 | 300831 | 1.40 |
-| DOGEUSD | M30 | TrendMeme_Pct_v1 | 310901 | 1.10 |
-| BTCUSD | H1 | TrendBTCUSD_v1 | 310903 | 1.10 |
-| WTIUSD | H1 | TrendWTIUSD_v1 | 310902 | 1.10 |
-| NMAI | H1 | NMAI_BuyDip_v1 | 310904 | 1.00 |
-| BTCUSD | M15+ | **Nomo_Futures_Grid_Bot** | 310940 | 1.01 | **EXPERIMENTAL grid** |
-
-**Nomo_Futures_Grid_Bot** (teste BTC ~US$300 — **fora das REGRAS** de “sem grid / 1 posição”)
-- Lote **0,01** · níveis default **3** (teto 8) · faixa auto **±2%** do preço
-- No init: loga margem buy/sell do 0,01 e quantos níveis a free margin comporta
-- Só arma os níveis **mais próximos** que cabem na margem (sem spam de erro)
-- BuyLimit abaixo / SellLimit acima · TP = 1 passo de grid
-- Fora da faixa: fecha posições + cancela pendentes
-- Magic **310940** · só para experimento; não misturar com Scalp/Trend no mesmo capital sem saber o risco
-
-Instalação: `eas/nomo/Nomo_Futures_Grid_Bot.mq5` → `MQL5/Experts/`, F7, gráfico **BTCUSD**. Log: `GridBTC EXP v1.01`, `MARGEM 0.01 | buy≈… sell≈…`.
-
-Arquivos em `eas/nomo/`. Legados em `eas/nomo/archive/`.
+**Instalação:** remova ScalpXAU/Pattern/etc. → `eas/nomo/RegimeRouterXAU_v1.mq5` → F7 → gráfico **XAUUSD M15**. Log: `RegimeRouterXAU v1.00`.
 
 ---
 
@@ -133,17 +98,8 @@ eas/
     RegimeRouterWIN_v1.mq5  # Clear / WIN roteador de regimes (ativo)
     archive/                # EAs antigos (não usar no real)
   nomo/
-    ScalpXAUUSD_v1.mq5    # Nomo / XAUUSD escada % (recomendado)
-    PatternXAUUSD_v1.mq5  # Nomo / XAUUSD padrões candle (A/B)
-    ScalpUSDJPY_v3.mq5    # USDJPY (pausado / referência)
-    ScalpUSDJPY_v2.mq5
-    TrendEURUSD_v1.mq5
-    TrendXRPUSD_v1.mq5
-    TrendBTCUSD_v1.mq5
-    TrendWTIUSD_v1.mq5
-    TrendMeme_Pct_v1.mq5
-    NMAI_BuyDip_v1.mq5
-    archive/              # versões antigas
+    RegimeRouterXAU_v1.mq5  # Nomo / XAUUSD roteador (ativo)
+    archive/                # EAs antigos Nomo
 ```
 
 ## Aviso
