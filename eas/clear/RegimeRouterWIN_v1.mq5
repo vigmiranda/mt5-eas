@@ -6,9 +6,10 @@
 //| OB sem indício → libera demais ANTES das 11h                     |
 //| STOP DIA 5% | sem meta de lucro / sem preferência 1 trade        |
 //| v1.04: cascata + flags + aborto cedo OB                          |
+//| v1.05: log M5 abreviado (2 linhas) + telinha enxuta              |
 //+------------------------------------------------------------------+
 #property copyright "Vitor / mt5-eas"
-#property version   "1.04"
+#property version   "1.05"
 #property strict
 
 #include <Trade/Trade.mqh>
@@ -214,6 +215,22 @@ string RegimeName(const ENUM_REGIME r)
 }
 
 //+------------------------------------------------------------------+
+// Abreviações curtas p/ log Experts (coluna Mensagem é estreita)
+string RegimeAbbr(const ENUM_REGIME r)
+{
+   switch(r)
+   {
+      case REG_R1_ABERTURA_OK: return "R1";
+      case REG_R2_EXPLOSIVA:   return "R2";
+      case REG_R3_TENDENCIA:   return "R3";
+      case REG_R4_LATERAL:     return "R4";
+      case REG_RISCO_DIA:      return "STOP";
+      case REG_FORA:           return "FORA";
+      default:                 return "?";
+   }
+}
+
+//+------------------------------------------------------------------+
 string ModuleName(const ENUM_MODULE m)
 {
    switch(m)
@@ -226,20 +243,37 @@ string ModuleName(const ENUM_MODULE m)
 }
 
 //+------------------------------------------------------------------+
+string ModuleAbbr(const ENUM_MODULE m)
+{
+   switch(m)
+   {
+      case MOD_OPENBREAK: return "OB";
+      case MOD_PULLBACK:  return "PB";
+      case MOD_MEANREV:   return "PM";
+      default:            return "-";
+   }
+}
+
+//+------------------------------------------------------------------+
+string ClipStr(const string s, const int maxLen)
+{
+   if(maxLen <= 3 || StringLen(s) <= maxLen) return s;
+   return StringSubstr(s, 0, maxLen - 3) + "...";
+}
+
+//+------------------------------------------------------------------+
 void LogWhy(const string msg)
 {
    g_lastAction = msg;
    if(InpVerboseLog)
-      PrintFormat("Router: %s", msg);
+      PrintFormat("RR ! | %s", ClipStr(msg, 90));
 }
 
 //+------------------------------------------------------------------+
 void LogSkip(const string msg)
 {
    g_lastSkip = msg;
-   // Sempre registra (barra M5 já limita a frequência via módulos / pulse)
-   if(InpVerboseLog)
-      PrintFormat("Router: SKIP | %s", msg);
+   // Skip só no pulse M5 (evita spam); guarda texto p/ linha 2
 }
 
 //+------------------------------------------------------------------+
@@ -254,35 +288,32 @@ void LogBarPulse(const datetime now)
    if(!InpVerboseLog)
       return;
 
-   string decision = "";
+   // Decisão curta (MT5 Experts não quebra linha bem — usamos 2 Prints + abrev)
+   string dec = "";
    if(g_dayStopped || g_regime == REG_RISCO_DIA)
-      decision = "NÃO OPERA — STOP DIA";
+      dec = "STOP";
    else if(g_lockedMod != MOD_NONE && (CountOurPositions() > 0 || g_pmActive))
-      decision = StringFormat("LOCK %s — gestão (sem outra estratégia)", ModuleName(g_lockedMod));
+      dec = StringFormat("LOCK-%s", ModuleAbbr(g_lockedMod));
    else if(g_activeMod == MOD_NONE)
-      decision = "NÃO OPERA — cascata sem fit / flags";
+      dec = "IDLE";
    else if(CountOurPositions() > 0)
-      decision = "EM POSIÇÃO — gestão ativa (sem nova entrada)";
+      dec = "POS";
    else if(g_tradesToday >= InpMaxTradesDay)
-      decision = "NÃO OPERA — teto segurança trades";
+      dec = "MAX";
    else
-      decision = StringFormat("AGUARDANDO SINAL — cascata %s", ModuleName(g_activeMod));
+      dec = StringFormat("WAIT-%s", ModuleAbbr(g_activeMod));
 
-   string last = (g_lastSkip != "" ? g_lastSkip : g_lastAction);
-   PrintFormat(
-      "Router: M5 %s | REGIME=%s | módulo=%s | %s | %s | caixa=%.0fpts%s | ADX=%.1f EMA%.0f/%.0f | dayPnL=R$%.0f | trades=%d/%d (OB=%d PB=%d MR=%d) | detalhe: %s",
-      TimeToString(bar0, TIME_MINUTES),
-      RegimeName(g_regime),
-      ModuleName(g_activeMod),
-      decision,
-      g_regimeWhy,
-      g_boxPts,
-      (g_r2Day ? " R2" : (g_boxReady ? " OK" : " …")),
-      g_adx, g_emaFast, g_emaSlow,
-      DayPnLMoney(),
-      g_tradesToday, InpMaxTradesDay, g_tradesOB, g_tradesPB, g_tradesMR,
-      last
-   );
+   string boxTag = (!g_boxReady ? "…" : (g_r2Day ? "R2" : "OK"));
+   string why = ClipStr(g_regimeWhy, 56);
+   string det = ClipStr((g_lastSkip != "" ? g_lastSkip : g_lastAction), 56);
+
+   // Linha 1: estado | Linha 2: motivo/detalhe (equivale a “quebra” no Experts)
+   PrintFormat("RR %s | %s %s | %s | cx=%.0f(%s) ADX=%.0f dPnL=%.0f t=%d/%d [%d|%d|%d]",
+               TimeToString(bar0, TIME_MINUTES),
+               RegimeAbbr(g_regime), ModuleAbbr(g_activeMod), dec,
+               g_boxPts, boxTag, g_adx, DayPnLMoney(),
+               g_tradesToday, InpMaxTradesDay, g_tradesOB, g_tradesPB, g_tradesMR);
+   PrintFormat("RR .. | %s | %s", why, det);
 }
 
 //+------------------------------------------------------------------+
@@ -1510,64 +1541,43 @@ void UpdateChartComment()
 {
    double dayPnL = DayPnLMoney();
    double stopLim = DailyLossLimitMoney();
-   string boxLine = g_boxReady
-      ? StringFormat("caixa %.0f–%.0f (%.0f pts) %s", g_boxLow, g_boxHigh, g_boxPts,
-                     (g_r2Day ? "INVÁLIDA→R2" : "OK→R1"))
-      : "caixa: montando / aguardando 09:15";
-
-   string sinal = "—";
+   string boxTag = (!g_boxReady ? "montando" : (g_r2Day ? "R2" : "OK"));
+   string sinal = "-";
    if(g_activeMod == MOD_PULLBACK && g_pbDir != 0 && !g_pbConsumed)
-      sinal = StringFormat("PB %s wait %s%.0f", (g_pbDir > 0 ? "BUY" : "SELL"),
-                           (g_pbDir > 0 ? ">" : "<"),
+      sinal = StringFormat("PB %s%.0f",
+                           (g_pbDir > 0 ? "BUY>" : "SELL<"),
                            (g_pbDir > 0 ? g_pbHigh + InpPB_EntryOffsetPts : g_pbLow - InpPB_EntryOffsetPts));
    else if(g_activeMod == MOD_OPENBREAK)
-      sinal = "OB aguarda rompimento caixa";
-   else if(g_activeMod == MOD_MEANREV || g_pmActive)
-      sinal = g_pmActive
-         ? StringFormat("PM %d/%d médio=%.0f alvo≈%.0f float=R$%.0f",
-                        g_pmLegs, InpPM_MaxLegs, g_pmAvg,
-                        (g_pmDir > 0 ? MathMax(g_bbMid, g_pmAvg + InpPM_MinGainPts)
-                                     : MathMin(g_bbMid, g_pmAvg - InpPM_MinGainPts)),
-                        FloatingPnLOurs())
-         : "PM aguarda extremo BB";
+      sinal = "OB wait break";
+   else if(g_pmActive)
+      sinal = StringFormat("PM %d/%d avg=%.0f f=R$%.0f", g_pmLegs, InpPM_MaxLegs, g_pmAvg, FloatingPnLOurs());
+   else if(g_activeMod == MOD_MEANREV)
+      sinal = "PM wait BB";
 
-   string flags = StringFormat("OB=%s PB=%s PM=%s",
-                               (InpEnableOpenBreak ? "ON" : "off"),
-                               (InpEnablePullback ? "ON" : "off"),
-                               (InpEnablePrecoMedio ? "ON" : "off"));
-   string lockLine = (g_lockedMod != MOD_NONE)
-      ? StringFormat("LOCK %s", ModuleName(g_lockedMod))
-      : (g_obAborted ? StringFormat("OB abort: %s", g_obAbortWhy) : "cascata livre");
+   string lockTag = (g_lockedMod != MOD_NONE)
+      ? StringFormat("LOCK %s", ModuleAbbr(g_lockedMod))
+      : (g_obAborted ? "OBabort" : "free");
 
+   // Telinha enxuta (Comment já quebra com \n)
    string txt = StringFormat(
-      "RegimeRouterWIN v1.04 | %s\n"
-      "REGIME: %s\n"
-      "porque: %s\n"
-      "módulo: %s | %s\n"
-      "%s | %s\n"
+      "RR v1.05 %s | %s %s | %s\n"
       "%s\n"
-      "ADX %.1f | EMA%d %.0f / EMA%d %.0f | ATR≈%.0f pts | spread %d\n"
-      "BB %.0f | %.0f | %.0f\n"
-      "capital R$%.0f (%s) | dayPnL R$%.0f | STOP DIA -R$%.0f (%.1f%%)%s\n"
-      "R4: stopCiclo=R$%.0f | lote/perna=%.0f | espaço=%.0fpts | PM %s\n"
-      "trades %d/%d (OB=%d PB=%d MR=%d) | vol=%.0f | magic %I64d\n"
-      "última ação: %s\n"
-      "último skip: %s",
-      _Symbol,
-      RegimeName(g_regime),
-      g_regimeWhy,
-      ModuleName(g_activeMod), sinal,
-      flags, lockLine,
-      boxLine,
-      g_adx, InpEMAFast, g_emaFast, InpEMASlow, g_emaSlow, g_atrPts, CurrentSpreadPoints(),
-      g_bbLower, g_bbMid, g_bbUpper,
-      GetCapital(), g_capitalSource, dayPnL, stopLim, InpStopDiaPct,
-      (g_dayStopped ? " | PARADO" : ""),
+      "flags OB%d PB%d PM%d | %s | cx=%.0f(%s)\n"
+      "ADX%.0f EMA%.0f/%.0f ATR%.0f spr%d\n"
+      "cap R$%.0f | dPnL R$%.0f | STOP -R$%.0f%s\n"
+      "PM cicR$%.0f lot%.0f sp%.0f | t %d/%d [%d|%d|%d]\n"
+      "act: %s\n"
+      "skip: %s",
+      _Symbol, RegimeAbbr(g_regime), ModuleAbbr(g_activeMod), sinal,
+      ClipStr(g_regimeWhy, 64),
+      (InpEnableOpenBreak ? 1 : 0), (InpEnablePullback ? 1 : 0), (InpEnablePrecoMedio ? 1 : 0),
+      lockTag, g_boxPts, boxTag,
+      g_adx, g_emaFast, g_emaSlow, g_atrPts, CurrentSpreadPoints(),
+      GetCapital(), dayPnL, stopLim, (g_dayStopped ? " HALT" : ""),
       InpPM_CycleStopBRL, R4LotsPerLeg(), PM_SpacePts(),
-      (g_pmActive ? "ATIVO" : "idle"),
-      g_tradesToday, InpMaxTradesDay, g_tradesOB, g_tradesPB, g_tradesMR, CalcVolume(), InpMagic,
-      g_lastAction,
-      g_lastSkip
+      g_tradesToday, InpMaxTradesDay, g_tradesOB, g_tradesPB, g_tradesMR,
+      ClipStr(g_lastAction, 72),
+      ClipStr(g_lastSkip, 72)
    );
    Comment(txt);
 }
@@ -1600,24 +1610,17 @@ int OnInit()
    ResetDayIfNeeded();
    RefreshIndicators();
 
-   Print("========== RegimeRouterWIN v1.04 ==========");
-   Print("Cascata M5: OpenBreak → Pullback → PreçoMédio | lock até flat | SEM meta lucro");
-   PrintFormat("Flags OB=%s PB=%s PM=%s | teto segurança trades=%d",
-               (InpEnableOpenBreak ? "ON" : "OFF"),
-               (InpEnablePullback ? "ON" : "OFF"),
-               (InpEnablePrecoMedio ? "ON" : "OFF"),
-               InpMaxTradesDay);
-   PrintFormat("InpClearSaldo(chart)=R$%.2f | seed aplicada=R$%.2f | capital=R$%.2f",
-               InpClearSaldo, g_seedCapital, GetCapital());
-   PrintFormat("vol=%.0f R4 lote/perna=%.0f magic=%I64d STOP DIA=%.1f%% (~R$%.0f)",
-               CalcVolume(), R4LotsPerLeg(), InpMagic, InpStopDiaPct, DailyLossLimitMoney());
-   PrintFormat("Caixa [%g–%g] pts | OB entry até %02d:%02d flat OB %02d:%02d | OB aborta → B/C antes das 11",
-               InpMinBoxPts, InpMaxBoxPts, InpOB_EntryEndH, InpOB_EntryEndM, InpOB_FlatH, InpOB_FlatM);
-   PrintFormat("B/C sessão até %02d:%02d | PB ADX>=%.0f | PM ADX<=%.0f maxLegs=%d stopCiclo=R$%.0f",
-               InpAftEndH, InpAftEndM, InpADX_TrendMin, InpADX_LateralMax,
-               InpPM_MaxLegs, InpPM_CycleStopBRL);
-   PrintFormat("R4 lotes: <%.0f→1 | >=%.0f→2 | >=%.0f→3 minis/perna",
-               InpPM_LotBand2Cap, InpPM_LotBand2Cap, InpPM_LotBand3Cap);
+   Print("========== RegimeRouterWIN v1.05 ==========");
+   Print("RR init | cascata OB>PB>PM | lock flat | sem meta | log curto (2 linhas/M5)");
+   PrintFormat("RR init | flags OB=%d PB=%d PM=%d | maxT=%d | STOP=%.0f%% (~R$%.0f)",
+               (InpEnableOpenBreak ? 1 : 0), (InpEnablePullback ? 1 : 0), (InpEnablePrecoMedio ? 1 : 0),
+               InpMaxTradesDay, InpStopDiaPct, DailyLossLimitMoney());
+   PrintFormat("RR init | seed=R$%.2f (chart=R$%.2f) | vol=%.0f | magic=%I64d",
+               g_seedCapital, InpClearSaldo, CalcVolume(), InpMagic);
+   PrintFormat("RR init | cx[%g-%g] OB<=%02d:%02d flatOB %02d:%02d | BC<=%02d:%02d | PB ADX>=%.0f PM<=%.0f",
+               InpMinBoxPts, InpMaxBoxPts, InpOB_EntryEndH, InpOB_EntryEndM, InpOB_FlatH, InpOB_FlatM,
+               InpAftEndH, InpAftEndM, InpADX_TrendMin, InpADX_LateralMax);
+   Print("RR leyenda | R1..R4/STOP/FORA | OB/PB/PM | IDLE WAIT LOCK POS MAX STOP | t=OB|PB|PM");
    Print("==========================================");
 
    UpdateChartComment();

@@ -17,24 +17,26 @@ Automação em **MetaTrader 5** para duas corretoras:
 
 | Ativo | Timeframe | EA | Magic | Versão | Papel |
 |-------|-----------|----|-------|--------|-------|
-| WINV26 / WIN$ | M5 | **RegimeRouterWIN_v1** | 260920 | 1.04 | **Único EA ativo (roteador em cascata)** |
+| WINV26 / WIN$ | M5 | **RegimeRouterWIN_v1** | 260920 | 1.05 | **Único EA ativo (roteador em cascata)** |
 
 EAs anteriores (OpenBreak, Pullback, ScalpWIN, TrendWIN) estão em [`eas/clear/archive/`](eas/clear/archive/) — **não usar no real**.
 
-**RegimeRouterWIN_v1** — cascata M5 (v1.04)
+**RegimeRouterWIN_v1** — cascata M5 (v1.05)
 - **A OpenBreak** → **B Pullback** → **C Preço médio** (cada uma com flag `InpEnable*`)
 - **Lock:** enquanto houver posição (ou pernas PM), só a estratégia dona opera — não abre outra
 - **Aborto cedo do OB:** caixa inválida (R2), janela até 10:30 sem entrada, flag off ou OB já operou → libera **B/C antes das 11h**
 - Padrões fortes: OB rompimento+volume · PB ADX≥20+EMAs · PM ADX≤18 + extremo BB (PM bloqueado em dia R2)
 - **Sem meta de lucro** / sem preferência 1 trade · teto de segurança `InpMaxTradesDay` · **STOP DIA 5%**
-- Capital virtual Clear semente **R$4.538,48** · log `Router: M5 …` · magic **260920**
+- Capital virtual Clear semente **R$4.538,48** · magic **260920**
+- **Log curto (v1.05):** a cada M5 duas linhas `RR …` com abreviações (`R1`/`OB`/`IDLE`/`WAIT`/`LOCK`…)
+- **Legenda completa:** [`eas/clear/RegimeRouterWIN_LOG.md`](eas/clear/RegimeRouterWIN_LOG.md)
 
 **Instalação**
 1. Remova qualquer EA antigo do gráfico WIN (OpenBreak/Pullback/Scalp…)
 2. Copie `eas/clear/RegimeRouterWIN_v1.mq5` → `MQL5/Experts/` → **F7**
 3. Arraste no **WIN M5**, Algotrading ON
-4. Log: `RegimeRouterWIN v1.04` + flags OB/PB/PM + `Router: M5 …`
-5. Telinha: regime / módulo / LOCK ou OB abort / dayPnL
+4. Log: `RegimeRouterWIN v1.05` + `RR HH:MM | R2 - | IDLE | …` (2 linhas por barra) — ver legenda no `.md` acima
+5. Telinha: `RR v1.05` compacta (regime / módulo / flags / dPnL)
 
 ### Capital virtual Clear — como funciona
 
