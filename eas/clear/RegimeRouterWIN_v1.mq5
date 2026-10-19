@@ -1,13 +1,14 @@
 //+------------------------------------------------------------------+
 //| RegimeRouterWIN_v1.mq5                                            |
-//| Clear / WIN — roteador de regimes (único EA ativo)                |
-//| R1 Abertura OK → OpenBreak | R2 Explosiva → fora ORB, tarde se R3|
-//| R3 Tendência → Pullback | R4 Lateral → preço médio (até 3 pernas)|
-//| STOP DIA 5% | stop ciclo R4 R$120 | semente Clear alinhável      |
-//| v1.03: força semente R$4538.48 (migra 5353 / input antigo do chart)|
+//| Clear / WIN — roteador de estratégias (único EA ativo)            |
+//| Cascata M5: OB → Pullback → PreçoMédio (flags on/off)            |
+//| Lock: 1 estratégia dona até flat (PM pode abrir pernas)          |
+//| OB sem indício → libera demais ANTES das 11h                     |
+//| STOP DIA 5% | sem meta de lucro / sem preferência 1 trade        |
+//| v1.04: cascata + flags + aborto cedo OB                          |
 //+------------------------------------------------------------------+
 #property copyright "Vitor / mt5-eas"
-#property version   "1.03"
+#property version   "1.04"
 #property strict
 
 #include <Trade/Trade.mqh>
@@ -48,8 +49,13 @@ input string InpHistoryFile       = "RegimeRouterWIN_v1_equity.csv";
 input group "=== Risco único do dia ==="
 input double InpStopDiaPct        = 5.0;      // STOP DIA absoluto (todos os módulos)
 input bool   InpFlatOnDailyLoss   = true;
-input int    InpMaxTradesDay      = 2;        // Máx total (manhã+tarde)
+input int    InpMaxTradesDay      = 8;        // Teto de segurança (não é meta / não é “1 trade”)
 input int    InpMaxSpreadPoints   = 40;
+
+input group "=== Estratégias (ligar / desligar) ==="
+input bool   InpEnableOpenBreak   = true;     // A — OpenBreak (abertura)
+input bool   InpEnablePullback    = true;     // B — Pullback (tendência)
+input bool   InpEnablePrecoMedio  = true;     // C — Preço médio (lateral)
 
 input group "=== Caixa abertura (R1/R2) ==="
 input int    InpBoxStartH         = 9;
@@ -72,10 +78,10 @@ input int    InpOB_BE_LockPts     = 20;
 input double InpOB_TrailStartATR  = 0.80;
 input double InpOB_TrailATR       = 0.50;
 
-input group "=== Sessão tarde (R3/R4) ==="
-input int    InpAftStartH         = 11;
+input group "=== Sessão B/C e flat ==="
+input int    InpAftStartH         = 11;       // reservado (cascata B/C inicia após aborto OB / fim caixa)
 input int    InpAftStartM         = 5;
-input int    InpAftEndH           = 15;
+input int    InpAftEndH           = 15;       // fim sessão B/C
 input int    InpAftEndM           = 45;
 input int    InpFlatH             = 16;
 input int    InpFlatM             = 0;
@@ -144,10 +150,14 @@ bool     g_boxReady = false;
 bool     g_boxLogged = false;
 bool     g_r2Day = false;          // abertura explosiva/inválida
 
-// Regime / UI
+// Regime / UI / cascata
 ENUM_REGIME g_regime = REG_UNKNOWN;
 ENUM_REGIME g_regimeLogged = REG_UNKNOWN;
 ENUM_MODULE g_activeMod = MOD_NONE;
+ENUM_MODULE g_lockedMod = MOD_NONE; // dona da posição até flat
+bool     g_obAborted = false;       // OB sem indício / janela acabou → libera B/C
+string   g_obAbortWhy = "";
+bool     g_obAbortLogged = false;
 string   g_regimeWhy = "";
 string   g_lastAction = "";
 string   g_lastSkip = "";
@@ -247,14 +257,16 @@ void LogBarPulse(const datetime now)
    string decision = "";
    if(g_dayStopped || g_regime == REG_RISCO_DIA)
       decision = "NÃO OPERA — STOP DIA";
+   else if(g_lockedMod != MOD_NONE && (CountOurPositions() > 0 || g_pmActive))
+      decision = StringFormat("LOCK %s — gestão (sem outra estratégia)", ModuleName(g_lockedMod));
    else if(g_activeMod == MOD_NONE)
-      decision = "NÃO OPERA — sem módulo neste regime/janela";
+      decision = "NÃO OPERA — cascata sem fit / flags";
    else if(CountOurPositions() > 0)
       decision = "EM POSIÇÃO — gestão ativa (sem nova entrada)";
    else if(g_tradesToday >= InpMaxTradesDay)
-      decision = "NÃO OPERA — max trades do dia";
+      decision = "NÃO OPERA — teto segurança trades";
    else
-      decision = StringFormat("AGUARDANDO SINAL — módulo %s", ModuleName(g_activeMod));
+      decision = StringFormat("AGUARDANDO SINAL — cascata %s", ModuleName(g_activeMod));
 
    string last = (g_lastSkip != "" ? g_lastSkip : g_lastAction);
    PrintFormat(
@@ -678,6 +690,10 @@ void ResetDayIfNeeded()
    g_regime = REG_UNKNOWN;
    g_regimeLogged = REG_UNKNOWN;
    g_activeMod = MOD_NONE;
+   g_lockedMod = MOD_NONE;
+   g_obAborted = false;
+   g_obAbortWhy = "";
+   g_obAbortLogged = false;
    g_regimeWhy = "aguardando caixa 09:00-09:15";
    g_lastAction = "novo dia";
    g_lastSkip = "";
@@ -689,9 +705,12 @@ void ResetDayIfNeeded()
    g_lastStatusBar = 0;
    PM_Reset();
 
-   LogWhy(StringFormat("NOVO DIA | capital start R$%.2f | STOP DIA %.1f%% = R$%.0f | OB/PB vol=%.0f | R4 lote/perna=%.0f magic=%I64d",
+   LogWhy(StringFormat("NOVO DIA | capital start R$%.2f | STOP DIA %.1f%% = R$%.0f | flags OB=%s PB=%s PM=%s | R4 lote/perna=%.0f magic=%I64d",
                        g_dayStartEquity, InpStopDiaPct, DailyLossLimitMoney(),
-                       CalcVolume(), R4LotsPerLeg(), InpMagic));
+                       (InpEnableOpenBreak ? "ON" : "OFF"),
+                       (InpEnablePullback ? "ON" : "OFF"),
+                       (InpEnablePrecoMedio ? "ON" : "OFF"),
+                       R4LotsPerLeg(), InpMagic));
 }
 
 //+------------------------------------------------------------------+
@@ -780,6 +799,117 @@ void BuildOrUpdateBox(const datetime now)
 }
 
 //+------------------------------------------------------------------+
+// Sessão em que B/C podem rodar (após caixa; OB liberado ou janela A esgotada)
+bool InCascadeSession(const datetime t)
+{
+   int n = MinutesOfDay(t);
+   if(n < HM(InpBoxEndH, InpBoxEndM)) return false;
+   if(n >= HM(InpAftEndH, InpAftEndM)) return false;
+   if(ShouldFlatDay(t)) return false;
+   return true;
+}
+
+//+------------------------------------------------------------------+
+void MarkOBAbort(const string why)
+{
+   g_obAborted = true;
+   g_obAbortWhy = why;
+   if(!g_obAbortLogged)
+   {
+      g_obAbortLogged = true;
+      LogWhy(StringFormat("OB ABORTADO → libera cascata B/C | %s", why));
+   }
+}
+
+//+------------------------------------------------------------------+
+void UpdateOpenBreakAbort(const datetime now)
+{
+   if(g_obAborted) return;
+
+   if(!InpEnableOpenBreak)
+   {
+      MarkOBAbort("flag OpenBreak OFF");
+      return;
+   }
+   if(g_r2Day)
+   {
+      MarkOBAbort(StringFormat("caixa inválida %.0f pts (R2) — sem ORB", g_boxPts));
+      return;
+   }
+   if(g_tradesOB > 0)
+   {
+      MarkOBAbort("OpenBreak já operou hoje");
+      return;
+   }
+   if(g_boxReady && MinutesOfDay(now) >= HM(InpOB_EntryEndH, InpOB_EntryEndM))
+   {
+      MarkOBAbort(StringFormat("janela OB encerrada %02d:%02d sem entrada", InpOB_EntryEndH, InpOB_EntryEndM));
+      return;
+   }
+}
+
+//+------------------------------------------------------------------+
+bool OpenBreakReleased()
+{
+   return g_obAborted || !InpEnableOpenBreak || g_r2Day || g_tradesOB > 0;
+}
+
+//+------------------------------------------------------------------+
+bool PatternTrendStrong(string &why)
+{
+   if(!RefreshIndicators()) { why = "indicadores indisponíveis"; return false; }
+   double emaSep = MathAbs(g_emaFast - g_emaSlow);
+   double emaSepPts = (_Point > 0.0 ? emaSep / _Point : emaSep);
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   bool trendUp = (g_emaFast > g_emaSlow && bid > g_emaFast);
+   bool trendDn = (g_emaFast < g_emaSlow && bid < g_emaFast);
+   bool strongADX = (g_adx >= InpADX_TrendMin);
+   bool sepOk = (emaSepPts >= InpEMA_SepMinPts);
+   if(strongADX && sepOk && (trendUp || trendDn))
+   {
+      why = StringFormat("ADX %.1f≥%.0f | EMA sep %.0f pts | viés %s",
+                         g_adx, InpADX_TrendMin, emaSepPts, (trendUp ? "ALTA" : "BAIXA"));
+      return true;
+   }
+   why = StringFormat("tendência fraca ADX=%.1f sep=%.0f", g_adx, emaSepPts);
+   return false;
+}
+
+//+------------------------------------------------------------------+
+bool PatternLateralStrong(string &why)
+{
+   if(!RefreshIndicators()) { why = "indicadores indisponíveis"; return false; }
+   if(g_adx <= InpADX_LateralMax)
+   {
+      why = StringFormat("ADX %.1f≤%.0f lateral", g_adx, InpADX_LateralMax);
+      return true;
+   }
+   why = StringFormat("não lateral ADX=%.1f", g_adx);
+   return false;
+}
+
+//+------------------------------------------------------------------+
+ENUM_MODULE InferLockedModule()
+{
+   if(g_pmActive) return MOD_MEANREV;
+   if(CountOurPositions() <= 0) return MOD_NONE;
+   // OB = sem TP; PB = com TP
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0) continue;
+      if(!PositionSelectByTicket(ticket)) continue;
+      if(PositionGetInteger(POSITION_MAGIC) != InpMagic) continue;
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+      if(PositionGetDouble(POSITION_TP) <= 0.0)
+         return MOD_OPENBREAK;
+      return MOD_PULLBACK;
+   }
+   return MOD_NONE;
+}
+
+//+------------------------------------------------------------------+
+// Cascata M5: A(OB) → B(PB) → C(PM). Lock até flat. OB aborta cedo → B/C antes das 11.
 void ClassifyRegime(const datetime now)
 {
    if(g_dayStopped || DailyLossHit())
@@ -795,6 +925,7 @@ void ClassifyRegime(const datetime now)
       g_regime = REG_FORA;
       g_regimeWhy = "após flat 16:00";
       g_activeMod = MOD_NONE;
+      g_lockedMod = MOD_NONE;
       return;
    }
 
@@ -802,99 +933,116 @@ void ClassifyRegime(const datetime now)
    {
       g_regime = REG_UNKNOWN;
       g_activeMod = MOD_NONE;
+      g_regimeWhy = "aguardando caixa 09:00-09:15";
       return;
    }
 
-   // Manhã
-   if(MinutesOfDay(now) < HM(InpAftStartH, InpAftStartM))
+   UpdateOpenBreakAbort(now);
+
+   // Lock: posição / pacote PM — não abre outra estratégia
+   if(CountOurPositions() > 0 || g_pmActive)
    {
-      if(g_r2Day)
-      {
-         g_regime = REG_R2_EXPLOSIVA;
-         g_regimeWhy = StringFormat("caixa %.0f pts fora do range — manhã FORA; tarde só se R3", g_boxPts);
-         g_activeMod = MOD_NONE;
-      }
-      else if(InMorningOBEntry(now) && g_tradesOB == 0)
+      if(g_lockedMod == MOD_NONE)
+         g_lockedMod = InferLockedModule();
+      g_activeMod = g_lockedMod;
+      if(g_lockedMod == MOD_OPENBREAK)
       {
          g_regime = REG_R1_ABERTURA_OK;
-         g_regimeWhy = StringFormat("caixa OK %.0f pts — módulo OpenBreak ativo", g_boxPts);
-         g_activeMod = MOD_OPENBREAK;
+         g_regimeWhy = "LOCK OpenBreak — gestão até flat";
+      }
+      else if(g_lockedMod == MOD_PULLBACK)
+      {
+         g_regime = REG_R3_TENDENCIA;
+         g_regimeWhy = "LOCK Pullback — gestão até flat";
+      }
+      else if(g_lockedMod == MOD_MEANREV)
+      {
+         g_regime = REG_R4_LATERAL;
+         g_regimeWhy = StringFormat("LOCK PreçoMédio %d/%d — pernas ok, sem outra estratégia",
+                                    g_pmLegs, InpPM_MaxLegs);
       }
       else
       {
-         g_regime = (g_r2Day ? REG_R2_EXPLOSIVA : REG_R1_ABERTURA_OK);
-         g_regimeWhy = (g_tradesOB > 0)
-            ? "OpenBreak já operou — aguardando tarde/gestão"
-            : "fora da janela de entrada OpenBreak (após 10:30)";
+         g_regime = REG_FORA;
+         g_regimeWhy = "posição nossa sem módulo identificado";
          g_activeMod = MOD_NONE;
       }
       return;
    }
 
-   // Tarde: classifica R3 / R4
-   if(!InAfternoon(now))
+   // Flat → libera lock e volta à cascata
+   g_lockedMod = MOD_NONE;
+
+   if(g_tradesToday >= InpMaxTradesDay)
    {
       g_regime = REG_FORA;
-      g_regimeWhy = "fora da sessão tarde";
+      g_regimeWhy = StringFormat("teto segurança %d trades", InpMaxTradesDay);
       g_activeMod = MOD_NONE;
       return;
    }
 
-   if(!RefreshIndicators())
+   // --- A: OpenBreak (só enquanto ainda há indício / janela) ---
+   if(InpEnableOpenBreak && !g_obAborted && !g_r2Day && g_tradesOB == 0 && InMorningOBEntry(now))
    {
-      g_regime = REG_FORA;
-      g_regimeWhy = "indicadores indisponíveis";
+      g_regime = REG_R1_ABERTURA_OK;
+      g_regimeWhy = StringFormat("cascata A | caixa OK %.0f pts — OpenBreak", g_boxPts);
+      g_activeMod = MOD_OPENBREAK;
+      return;
+   }
+
+   // --- B/C: só se OB liberou (ou desligado) e estamos na sessão de cascata ---
+   if(!OpenBreakReleased())
+   {
+      // Ainda montando / esperando caixa válida sem estar na janela OB
+      g_regime = (g_r2Day ? REG_R2_EXPLOSIVA : REG_R1_ABERTURA_OK);
+      g_regimeWhy = "aguardando janela/aborto OpenBreak antes de B/C";
       g_activeMod = MOD_NONE;
       return;
    }
 
-   double emaSep = MathAbs(g_emaFast - g_emaSlow);
-   double emaSepPts = (_Point > 0.0 ? emaSep / _Point : emaSep);
-   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   bool trendUp = (g_emaFast > g_emaSlow && bid > g_emaFast);
-   bool trendDn = (g_emaFast < g_emaSlow && bid < g_emaFast);
-   bool strongADX = (g_adx >= InpADX_TrendMin);
-   bool sepOk = (emaSepPts >= InpEMA_SepMinPts);
+   if(!InCascadeSession(now))
+   {
+      g_regime = REG_FORA;
+      g_regimeWhy = OpenBreakReleased()
+         ? StringFormat("OB liberado (%s) — fora sessão B/C", g_obAbortWhy)
+         : "fora sessão cascata";
+      g_activeMod = MOD_NONE;
+      return;
+   }
 
-   if(strongADX && sepOk && (trendUp || trendDn))
+   string why = "";
+
+   // --- B: Pullback (tendência forte) ---
+   if(InpEnablePullback && g_tradesPB == 0 && PatternTrendStrong(why))
    {
       g_regime = REG_R3_TENDENCIA;
-      g_regimeWhy = StringFormat("ADX %.1f≥%.0f | EMA sep %.0f pts | viés %s — Pullback",
-                                 g_adx, InpADX_TrendMin, emaSepPts, (trendUp ? "ALTA" : "BAIXA"));
-      // R2: tarde só se R3 — já estamos em R3, ok. R1 também ok.
-      if(g_tradesPB == 0 && g_tradesMR == 0 && g_tradesToday < InpMaxTradesDay)
-         g_activeMod = MOD_PULLBACK;
-      else
-         g_activeMod = MOD_NONE;
+      g_regimeWhy = StringFormat("cascata B | %s — Pullback%s", why,
+                                 (g_obAborted ? " (OB liberou cedo)" : ""));
+      g_activeMod = MOD_PULLBACK;
       return;
    }
 
-   if(g_adx <= InpADX_LateralMax)
+   // --- C: Preço médio (lateral; não em dia R2 caótico) ---
+   if(InpEnablePrecoMedio && g_tradesMR == 0 && !g_r2Day && PatternLateralStrong(why))
    {
-      // R2 explosiva: lateral à tarde = FORA (não mean-rev em dia caótico sem tendência)
-      // Na verdade alinhamos: R4 mean-rev quando lateral. Em R2 day, se for lateral (não R3), fora.
-      if(g_r2Day)
-      {
-         g_regime = REG_R2_EXPLOSIVA;
-         g_regimeWhy = StringFormat("R2+lateral (ADX %.1f) — SEM mean-rev; só entraria se virasse R3", g_adx);
-         g_activeMod = MOD_NONE;
-         return;
-      }
-
       g_regime = REG_R4_LATERAL;
-      g_regimeWhy = StringFormat("ADX %.1f≤%.0f — PreçoMédio até %d pernas | lote/perna=%.0f | stopCiclo=R$%.0f",
-                                 g_adx, InpADX_LateralMax, InpPM_MaxLegs, R4LotsPerLeg(), InpPM_CycleStopBRL);
-      // Permite gerir pacote ativo mesmo após contar o ciclo
-      if(g_pmActive || (g_tradesPB == 0 && g_tradesMR == 0 && g_tradesToday < InpMaxTradesDay))
-         g_activeMod = MOD_MEANREV;
-      else
-         g_activeMod = MOD_NONE;
+      g_regimeWhy = StringFormat("cascata C | %s — PreçoMédio%s", why,
+                                 (g_obAborted ? " (OB liberou cedo)" : ""));
+      g_activeMod = MOD_MEANREV;
       return;
    }
 
-   // Zona cinza entre ADX 18 e 20 ou sem alinhamento
+   if(g_r2Day)
+   {
+      g_regime = REG_R2_EXPLOSIVA;
+      g_regimeWhy = StringFormat("R2 — PM bloqueado; sem fit Pullback | %s", why);
+      g_activeMod = MOD_NONE;
+      return;
+   }
+
    g_regime = REG_FORA;
-   g_regimeWhy = StringFormat("zona cinza ADX=%.1f sep=%.0f — sem módulo (aguarda R3/R4 claro)", g_adx, emaSepPts);
+   g_regimeWhy = StringFormat("cascata sem fit | OB=%s | %s",
+                              (g_obAborted ? g_obAbortWhy : "n/a"), why);
    g_activeMod = MOD_NONE;
 }
 
@@ -964,6 +1112,7 @@ bool OpenMarket(const int dir, const double sl, const double tp, const string ta
 //+------------------------------------------------------------------+
 void ModuleOpenBreak()
 {
+   if(!InpEnableOpenBreak) return;
    if(g_activeMod != MOD_OPENBREAK) return;
    if(g_tradesOB > 0 || g_tradesToday >= InpMaxTradesDay) return;
    if(CountOurPositions() > 0) return;
@@ -1010,7 +1159,10 @@ void ModuleOpenBreak()
 
    // Sem TP fixo — gestão BE+trail
    if(OpenMarket(dir, sl, 0.0, "OB"))
+   {
       g_tradesOB++;
+      g_lockedMod = MOD_OPENBREAK;
+   }
 }
 
 //+------------------------------------------------------------------+
@@ -1122,8 +1274,9 @@ void RefreshPullbackSignal()
 //+------------------------------------------------------------------+
 void ModulePullback()
 {
+   if(!InpEnablePullback) return;
    if(g_activeMod != MOD_PULLBACK) return;
-   if(g_tradesPB > 0 || g_tradesMR > 0) return;
+   if(g_tradesPB > 0) return;
    if(g_tradesToday >= InpMaxTradesDay) return;
    if(CountOurPositions() > 0) return;
 
@@ -1168,7 +1321,10 @@ void ModulePullback()
    tp = SnapPrice(tp);
 
    if(OpenMarket(g_pbDir, sl, tp, "PB"))
+   {
       g_tradesPB++;
+      g_lockedMod = MOD_PULLBACK;
+   }
 }
 
 //+------------------------------------------------------------------+
@@ -1280,9 +1436,9 @@ void ManagePrecoMedio()
       }
    }
 
-   // Adiciona perna se preço andou contra o espaçamento
+   // Adiciona perna se preço andou contra o espaçamento (mesmo ciclo / lock)
    if(g_pmLegs >= InpPM_MaxLegs) return;
-   if(g_activeMod != MOD_MEANREV) return;
+   if(g_lockedMod != MOD_MEANREV && g_activeMod != MOD_MEANREV) return;
 
    double space = PM_SpacePts() * pt;
    bool add = false;
@@ -1296,6 +1452,7 @@ void ManagePrecoMedio()
 //+------------------------------------------------------------------+
 void ModuleMeanRev()
 {
+   if(!InpEnablePrecoMedio && !g_pmActive) return;
    if(g_activeMod != MOD_MEANREV && !g_pmActive) return;
 
    // Sempre gerencia pacote aberto
@@ -1305,7 +1462,7 @@ void ModuleMeanRev()
       return;
    }
 
-   if(g_tradesMR > 0 || g_tradesPB > 0) return;
+   if(g_tradesMR > 0) return;
    if(g_tradesToday >= InpMaxTradesDay) return;
    if(CountOurPositions() > 0) return;
    if(!RefreshIndicators()) return;
@@ -1338,6 +1495,7 @@ void ModuleMeanRev()
 
    if(OpenPM_Leg(dir, lots, "PM1"))
    {
+      g_lockedMod = MOD_MEANREV;
       if(!g_pmCycleCounted)
       {
          g_tradesMR++;
@@ -1373,23 +1531,33 @@ void UpdateChartComment()
                         FloatingPnLOurs())
          : "PM aguarda extremo BB";
 
+   string flags = StringFormat("OB=%s PB=%s PM=%s",
+                               (InpEnableOpenBreak ? "ON" : "off"),
+                               (InpEnablePullback ? "ON" : "off"),
+                               (InpEnablePrecoMedio ? "ON" : "off"));
+   string lockLine = (g_lockedMod != MOD_NONE)
+      ? StringFormat("LOCK %s", ModuleName(g_lockedMod))
+      : (g_obAborted ? StringFormat("OB abort: %s", g_obAbortWhy) : "cascata livre");
+
    string txt = StringFormat(
-      "RegimeRouterWIN v1.03 | %s\n"
+      "RegimeRouterWIN v1.04 | %s\n"
       "REGIME: %s\n"
       "porque: %s\n"
       "módulo: %s | %s\n"
+      "%s | %s\n"
       "%s\n"
       "ADX %.1f | EMA%d %.0f / EMA%d %.0f | ATR≈%.0f pts | spread %d\n"
       "BB %.0f | %.0f | %.0f\n"
       "capital R$%.0f (%s) | dayPnL R$%.0f | STOP DIA -R$%.0f (%.1f%%)%s\n"
       "R4: stopCiclo=R$%.0f | lote/perna=%.0f | espaço=%.0fpts | PM %s\n"
-      "trades %d/%d (OB=%d PB=%d MR=%d) | OB/PB vol=%.0f | magic %I64d\n"
+      "trades %d/%d (OB=%d PB=%d MR=%d) | vol=%.0f | magic %I64d\n"
       "última ação: %s\n"
       "último skip: %s",
       _Symbol,
       RegimeName(g_regime),
       g_regimeWhy,
       ModuleName(g_activeMod), sinal,
+      flags, lockLine,
       boxLine,
       g_adx, InpEMAFast, g_emaFast, InpEMASlow, g_emaSlow, g_atrPts, CurrentSpreadPoints(),
       g_bbLower, g_bbMid, g_bbUpper,
@@ -1432,21 +1600,24 @@ int OnInit()
    ResetDayIfNeeded();
    RefreshIndicators();
 
-   Print("========== RegimeRouterWIN v1.03 ==========");
-   Print("Router: log a cada barra M5 + R4 preço médio (até 3 pernas, stop ciclo R$120)");
+   Print("========== RegimeRouterWIN v1.04 ==========");
+   Print("Cascata M5: OpenBreak → Pullback → PreçoMédio | lock até flat | SEM meta lucro");
+   PrintFormat("Flags OB=%s PB=%s PM=%s | teto segurança trades=%d",
+               (InpEnableOpenBreak ? "ON" : "OFF"),
+               (InpEnablePullback ? "ON" : "OFF"),
+               (InpEnablePrecoMedio ? "ON" : "OFF"),
+               InpMaxTradesDay);
    PrintFormat("InpClearSaldo(chart)=R$%.2f | seed aplicada=R$%.2f | capital=R$%.2f",
                InpClearSaldo, g_seedCapital, GetCapital());
-   PrintFormat("OB/PB vol=%.0f R4 lote/perna=%.0f magic=%I64d STOP DIA=%.1f%% (~R$%.0f)",
+   PrintFormat("vol=%.0f R4 lote/perna=%.0f magic=%I64d STOP DIA=%.1f%% (~R$%.0f)",
                CalcVolume(), R4LotsPerLeg(), InpMagic, InpStopDiaPct, DailyLossLimitMoney());
-   PrintFormat("R1 caixa [%g–%g] pts | OB entry até %02d:%02d flat %02d:%02d",
+   PrintFormat("Caixa [%g–%g] pts | OB entry até %02d:%02d flat OB %02d:%02d | OB aborta → B/C antes das 11",
                InpMinBoxPts, InpMaxBoxPts, InpOB_EntryEndH, InpOB_EntryEndM, InpOB_FlatH, InpOB_FlatM);
-   PrintFormat("Tarde %02d:%02d–%02d:%02d | R3 ADX>=%.0f | R4 ADX<=%.0f PreçoMédio maxLegs=%d stopCiclo=R$%.0f espaço=%.2fxATR [%d-%d]",
-               InpAftStartH, InpAftStartM, InpAftEndH, InpAftEndM,
-               InpADX_TrendMin, InpADX_LateralMax, InpPM_MaxLegs, InpPM_CycleStopBRL,
-               InpPM_ATR_SpaceMult, InpPM_SpaceMinPts, InpPM_SpaceMaxPts);
-   PrintFormat("R4 lotes: <%.0f→1 | >=%.0f→2 | >=%.0f→3 minis/perna (sem dobrar na média)",
+   PrintFormat("B/C sessão até %02d:%02d | PB ADX>=%.0f | PM ADX<=%.0f maxLegs=%d stopCiclo=R$%.0f",
+               InpAftEndH, InpAftEndM, InpADX_TrendMin, InpADX_LateralMax,
+               InpPM_MaxLegs, InpPM_CycleStopBRL);
+   PrintFormat("R4 lotes: <%.0f→1 | >=%.0f→2 | >=%.0f→3 minis/perna",
                InpPM_LotBand2Cap, InpPM_LotBand2Cap, InpPM_LotBand3Cap);
-   Print("Semente GV v103 — se o chart ainda tiver 5353.45, o EA força 4538.48 automaticamente.");
    Print("==========================================");
 
    UpdateChartComment();
