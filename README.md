@@ -29,12 +29,13 @@ EAs anteriores (OpenBreak, Pullback, ScalpWIN, TrendWIN) estão em [`eas/clear/a
 - **Sem meta de lucro** / sem preferência 1 trade · teto de segurança `InpMaxTradesDay` · **STOP DIA 5%**
 - Capital virtual Clear semente **R$4.538,48** · magic **260920**
 - **Log curto (v1.05):** a cada M5 duas linhas `RR …` com abreviações (`R1`/`OB`/`IDLE`/`WAIT`/`LOCK`…)
+- **Legenda completa:** [`eas/clear/RegimeRouterWIN_LOG.md`](eas/clear/RegimeRouterWIN_LOG.md)
 
 **Instalação**
 1. Remova qualquer EA antigo do gráfico WIN (OpenBreak/Pullback/Scalp…)
 2. Copie `eas/clear/RegimeRouterWIN_v1.mq5` → `MQL5/Experts/` → **F7**
 3. Arraste no **WIN M5**, Algotrading ON
-4. Log: `RegimeRouterWIN v1.05` + `RR HH:MM | R2 - | IDLE | …` (2 linhas por barra)
+4. Log: `RegimeRouterWIN v1.05` + `RR HH:MM | R2 - | IDLE | …` (2 linhas por barra) — ver legenda no `.md` acima
 5. Telinha: `RR v1.05` compacta (regime / módulo / flags / dPnL)
 
 ### Capital virtual Clear — como funciona

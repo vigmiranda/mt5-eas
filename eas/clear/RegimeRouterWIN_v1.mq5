@@ -258,7 +258,7 @@ string ModuleAbbr(const ENUM_MODULE m)
 string ClipStr(const string s, const int maxLen)
 {
    if(maxLen <= 3 || StringLen(s) <= maxLen) return s;
-   return StringSubstr(s, 0, maxLen - 1) + "…";
+   return StringSubstr(s, 0, maxLen - 3) + "...";
 }
 
 //+------------------------------------------------------------------+
