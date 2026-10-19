@@ -1,4 +1,4 @@
-# RegimeRouterWIN — legenda do log (v1.05+)
+# RegimeRouterWIN — legenda do log (v1.06+)
 
 No Experts do MT5 a coluna **Mensagem** é estreita. Por isso o pulse M5 usa **2 linhas curtas** com prefixo `RR` e abreviações.
 
@@ -9,15 +9,15 @@ Documentação geral do EA: [`README.md`](../../README.md) · regras: [`REGRAS.m
 ## Formato a cada barra M5
 
 ```
-RR HH:MM | <regime> <módulo> | <decisão> | cx=… ADX=… dPnL=… t=… […]
+RR HH:MM | <regime> <módulo> | <decisão> | cx=… ADX=… dPnL=… t=… [o|p|c|v|m]
 RR .. | <porque (regimeWhy)> | <último skip ou ação>
 ```
 
 **Exemplo**
 
 ```
-RR 18:20 | FORA - | IDLE | cx=1355(R2) ADX=29 dPnL=0 t=0/8 [0|0|0]
-RR .. | após flat 16:00 | REGIME R2_EXPLOSIVA -> FORA | ...
+RR 11:20 | R5 CB | WAIT-CB | cx=420(OK) ADX=24 dPnL=0 t=0/8 [0|0|0|0|0]
+RR .. | cascata D | CB ADX 24.1 range 128400–128820 viés ALTA | CB aguarda rompimento...
 ```
 
 Outros prefixes:
@@ -35,9 +35,11 @@ Outros prefixes:
 | Abrev | Significado |
 |-------|-------------|
 | `R1` | Abertura OK — caixa válida, OpenBreak elegível |
-| `R2` | Abertura explosiva / caixa inválida — sem ORB; PM bloqueado |
-| `R3` | Tendência — Pullback elegível |
+| `R2` | Abertura explosiva / caixa inválida — sem ORB; PM/VF bloqueados |
+| `R3` | Tendência — Pullback com **sinal** |
 | `R4` | Lateral — Preço médio elegível |
+| `R5` | Continuação — ContBreak (rompimento range manhã) |
+| `R6` | VWAP fade — extensão vs VWAP de sessão |
 | `STOP` | STOP DIA ativo (risco do dia) |
 | `FORA` | Fora de sessão / sem fit / flat |
 | `?` | Desconhecido |
@@ -46,14 +48,18 @@ Outros prefixes:
 
 ## Módulo / estratégia (`ModuleAbbr`)
 
-| Abrev | Estratégia | Flag |
-|-------|------------|------|
-| `OB` | OpenBreak (abertura) | `InpEnableOpenBreak` |
-| `PB` | Pullback (tendência) | `InpEnablePullback` |
-| `PM` | Preço médio (lateral) | `InpEnablePrecoMedio` |
+Cascata: **OB → PB → CB → VF → PM**.
+
+| Abrev | Estratégia | Flag (default) |
+|-------|------------|----------------|
+| `OB` | OpenBreak (abertura) | `InpEnableOpenBreak` = on |
+| `PB` | Pullback (tendência + sinal) | `InpEnablePullback` = on |
+| `CB` | ContBreak (continuação / breakout) | `InpEnableContBreak` = **on** |
+| `VF` | VwapFade (reversão à VWAP) | `InpEnableVwapFade` = **on** |
+| `PM` | Preço médio (lateral, até 3 pernas) | `InpEnablePrecoMedio` = on |
 | `-` | Nenhum módulo ativo | — |
 
-Cascata: **OB → PB → PM**. Com posição (ou pernas PM), fica em **LOCK** nessa estratégia até flat.
+Com posição (ou pernas PM), fica em **LOCK** nessa estratégia até flat.
 
 ---
 
@@ -62,8 +68,8 @@ Cascata: **OB → PB → PM**. Com posição (ou pernas PM), fica em **LOCK** ne
 | Abrev | Significado |
 |-------|-------------|
 | `IDLE` | Cascata sem fit / flags / fora de janela — não opera |
-| `WAIT-OB` / `WAIT-PB` / `WAIT-PM` | Módulo ativo, aguardando sinal de entrada |
-| `LOCK-OB` / `LOCK-PB` / `LOCK-PM` | Posição (ou ciclo PM) aberta — só gestão, sem outra estratégia |
+| `WAIT-OB` / `WAIT-PB` / `WAIT-CB` / `WAIT-VF` / `WAIT-PM` | Módulo ativo, aguardando sinal |
+| `LOCK-OB` / `LOCK-PB` / `LOCK-CB` / `LOCK-VF` / `LOCK-PM` | Posição aberta — só gestão |
 | `POS` | Em posição (gestão) |
 | `MAX` | Atingiu teto de segurança `InpMaxTradesDay` |
 | `STOP` | STOP DIA — flat + bloqueio |
@@ -78,38 +84,40 @@ Cascata: **OB → PB → PM**. Com posição (ou pernas PM), fica em **LOCK** ne
 | `ADX=29` | ADX atual (arredondado) |
 | `dPnL=0` | Day PnL em R$ (virtual) |
 | `t=0/8` | Trades do dia / teto de segurança |
-| `[0\|0\|0]` | Contadores `[OB\|PB\|PM]` (ciclos já usados hoje) |
+| `[o\|p\|c\|v\|m]` | Contadores `OB\|PB\|CB\|VF\|PM` (ciclos já usados hoje) |
+
+---
+
+## Ideia rápida dos módulos novos
+
+**CB (ContBreak)**  
+Após range manhã (09:00 → `InpCB_RangeEnd`, default 11:00), com ADX ≥ `InpCB_ADXMin` e EMAs alinhadas: rompimento da máx/mín da manhã no sentido da tendência. 1 entrada, TP por R:R.
+
+**VF (VwapFade)**  
+Preço longe da VWAP de sessão (≥ `InpVF_MinDistPts`) e ADX ≤ `InpVF_ADXMax`: fade de volta à VWAP (1 entrada, TP = VWAP). Bloqueado em dia R2.
 
 ---
 
 ## Telinha do gráfico (`Comment`)
 
-Compacta, mesma ideia de abreviações:
-
 ```
-RR v1.05 WIN$N | FORA - | -
-após flat 16:00
-flags OB1 PB1 PM1 | OBabort | cx=1355(R2)
+RR v1.06 WIN$N | R5 CB | CB rng 128400-128820
 ...
+OB1 PB1 CB0 VF0 PM1 | free | cx=420(OK)
 ```
 
 | Tag | Significado |
 |-----|-------------|
-| `flags OB1 PB1 PM1` | `1` = ligada, `0` = desligada |
-| `LOCK OB` / `PB` / `PM` | Estratégia dona da posição |
-| `OBabort` | OpenBreak liberou a cascata B/C |
-| `free` | Sem lock e OB ainda não abortou (ou já flat) |
+| `OB1 PB1 CB0 VF0 PM1` | `1` = ligada, `0` = desligada |
+| `LOCK CB` / etc. | Estratégia dona da posição |
+| `OBabort` | OpenBreak liberou a cascata B–E |
 | `HALT` | Dia parado por STOP |
 
 ---
 
 ## Eventos importantes (`RR !`)
 
-Ações relevantes (entrada, aborto OB, ciclo PM, STOP DIA, etc.) saem em uma linha:
-
 ```
-RR ! | ENTRADA OB BUY vol=1 @≈... | regime=R1 | ...
-RR ! | OB ABORTADO → libera cascata B/C | caixa inválida ...
+RR ! | ENTRADA CB BUY vol=1 @≈... | regime=R5 | ...
+RR ! | OB ABORTADO → libera cascata B–E | ...
 ```
-
-Textos longos são cortados (`...`) para caber na coluna do Experts; o detalhe completo fica na telinha (`act:` / `skip:`) quando couber.
