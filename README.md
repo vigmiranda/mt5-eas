@@ -17,7 +17,7 @@ Automação em **MetaTrader 5** para duas corretoras:
 
 | Ativo | Timeframe | EA | Magic | Versão | Papel |
 |-------|-----------|----|-------|--------|-------|
-| WINV26 / WIN$ | M5 | **RegimeRouterWIN_v1** | 260920 | 1.02 | **Único EA ativo (roteador de regimes)** |
+| WINV26 / WIN$ | M5 | **RegimeRouterWIN_v1** | 260920 | 1.03 | **Único EA ativo (roteador de regimes)** |
 
 EAs anteriores (OpenBreak, Pullback, ScalpWIN, TrendWIN) estão em [`eas/clear/archive/`](eas/clear/archive/) — **não usar no real**.
 
@@ -34,7 +34,7 @@ EAs anteriores (OpenBreak, Pullback, ScalpWIN, TrendWIN) estão em [`eas/clear/a
 1. Remova qualquer EA antigo do gráfico WIN (OpenBreak/Pullback/Scalp…)
 2. Copie `eas/clear/RegimeRouterWIN_v1.mq5` → `MQL5/Experts/` → **F7**
 3. Arraste no **WIN M5**, Algotrading ON
-4. Log: `RegimeRouterWIN v1.02` + `Router: M5 …` a cada barra + linhas `REGIME …` / `ENTRADA …`
+4. Log: `RegimeRouterWIN v1.03` + `Router: M5 …` a cada barra + linhas `REGIME …` / `ENTRADA …`
 5. Telinha: `REGIME: R1_…` / `módulo:` / `porque:` / dayPnL / trades OB/PB/MR
 
 ### Capital virtual Clear — como funciona

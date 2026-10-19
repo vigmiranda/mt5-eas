@@ -4,10 +4,10 @@
 //| R1 Abertura OK → OpenBreak | R2 Explosiva → fora ORB, tarde se R3|
 //| R3 Tendência → Pullback | R4 Lateral → preço médio (até 3 pernas)|
 //| STOP DIA 5% | stop ciclo R4 R$120 | semente Clear alinhável      |
-//| v1.02: R4 preço médio + lotes por faixa de capital                |
+//| v1.03: força semente R$4538.48 (migra 5353 / input antigo do chart)|
 //+------------------------------------------------------------------+
 #property copyright "Vitor / mt5-eas"
-#property version   "1.02"
+#property version   "1.03"
 #property strict
 
 #include <Trade/Trade.mqh>
@@ -407,21 +407,53 @@ bool ShouldFlatOBPosition(const datetime t)
 }
 
 //+------------------------------------------------------------------+
-string GVPrefix() { return StringFormat("RegimeRouterWIN_v102_%I64d_", InpMagic); } // v102 → semente 4538.48
+string GVPrefix() { return StringFormat("RegimeRouterWIN_v103_%I64d_", InpMagic); }
+
+//+------------------------------------------------------------------+
+// MT5 costuma guardar InpClearSaldo antigo no gráfico (5353.45).
+// Se input/GV ainda for a semente legada, aplica o saldo Clear atual.
+double ResolveClearSeed()
+{
+   const double kTarget = 4538.48;
+   const double kLegacy = 5353.45;
+   double seed = InpClearSaldo;
+   if(MathAbs(seed - kLegacy) < 0.05)
+   {
+      PrintFormat("Router: InpClearSaldo ainda R$%.2f (salvo no gráfico) → forçando R$%.2f", seed, kTarget);
+      seed = kTarget;
+   }
+   return seed;
+}
 
 //+------------------------------------------------------------------+
 void EnsureSeedCapital()
 {
    string keySeed = GVPrefix() + "seed";
    string keyEpoch = GVPrefix() + "epoch";
-   if(InpResetVirtualSeed || !GlobalVariableCheck(keySeed) || !GlobalVariableCheck(keyEpoch))
+   const double kLegacy = 5353.45;
+   double wanted = ResolveClearSeed();
+
+   bool miss = (InpResetVirtualSeed || !GlobalVariableCheck(keySeed) || !GlobalVariableCheck(keyEpoch));
+   if(!miss)
    {
-      g_seedCapital = InpClearSaldo;
+      double stored = GlobalVariableGet(keySeed);
+      // só remigra automaticamente a semente legada 5353.45
+      if(MathAbs(stored - kLegacy) < 0.05)
+      {
+         miss = true;
+         PrintFormat("Router: GV ainda com semente legada R$%.2f → R$%.2f", stored, wanted);
+      }
+   }
+
+   if(miss)
+   {
+      g_seedCapital = wanted;
       g_equityEpoch = TimeTradeServer();
       GlobalVariableSet(keySeed, g_seedCapital);
       GlobalVariableSet(keyEpoch, (double)g_equityEpoch);
-      LogWhy(StringFormat("semente capital R$%.2f época %s", g_seedCapital,
-                          TimeToString(g_equityEpoch, TIME_DATE|TIME_MINUTES)));
+      LogWhy(StringFormat("semente capital R$%.2f época %s (input chart=R$%.2f)",
+                          g_seedCapital, TimeToString(g_equityEpoch, TIME_DATE|TIME_MINUTES),
+                          InpClearSaldo));
    }
    else
    {
@@ -1342,7 +1374,7 @@ void UpdateChartComment()
          : "PM aguarda extremo BB";
 
    string txt = StringFormat(
-      "RegimeRouterWIN v1.02 | %s\n"
+      "RegimeRouterWIN v1.03 | %s\n"
       "REGIME: %s\n"
       "porque: %s\n"
       "módulo: %s | %s\n"
@@ -1400,11 +1432,12 @@ int OnInit()
    ResetDayIfNeeded();
    RefreshIndicators();
 
-   Print("========== RegimeRouterWIN v1.02 ==========");
+   Print("========== RegimeRouterWIN v1.03 ==========");
    Print("Router: log a cada barra M5 + R4 preço médio (até 3 pernas, stop ciclo R$120)");
-   PrintFormat("capital=R$%.2f seed=R$%.2f OB/PB vol=%.0f R4 lote/perna=%.0f magic=%I64d STOP DIA=%.1f%% (~R$%.0f)",
-               GetCapital(), g_seedCapital, CalcVolume(), R4LotsPerLeg(), InpMagic,
-               InpStopDiaPct, DailyLossLimitMoney());
+   PrintFormat("InpClearSaldo(chart)=R$%.2f | seed aplicada=R$%.2f | capital=R$%.2f",
+               InpClearSaldo, g_seedCapital, GetCapital());
+   PrintFormat("OB/PB vol=%.0f R4 lote/perna=%.0f magic=%I64d STOP DIA=%.1f%% (~R$%.0f)",
+               CalcVolume(), R4LotsPerLeg(), InpMagic, InpStopDiaPct, DailyLossLimitMoney());
    PrintFormat("R1 caixa [%g–%g] pts | OB entry até %02d:%02d flat %02d:%02d",
                InpMinBoxPts, InpMaxBoxPts, InpOB_EntryEndH, InpOB_EntryEndM, InpOB_FlatH, InpOB_FlatM);
    PrintFormat("Tarde %02d:%02d–%02d:%02d | R3 ADX>=%.0f | R4 ADX<=%.0f PreçoMédio maxLegs=%d stopCiclo=R$%.0f espaço=%.2fxATR [%d-%d]",
@@ -1413,7 +1446,7 @@ int OnInit()
                InpPM_ATR_SpaceMult, InpPM_SpaceMinPts, InpPM_SpaceMaxPts);
    PrintFormat("R4 lotes: <%.0f→1 | >=%.0f→2 | >=%.0f→3 minis/perna (sem dobrar na média)",
                InpPM_LotBand2Cap, InpPM_LotBand2Cap, InpPM_LotBand3Cap);
-   Print("Nova semente GV v102 — ao arrastar de novo aplica R$4538.48 se GV antiga.");
+   Print("Semente GV v103 — se o chart ainda tiver 5353.45, o EA força 4538.48 automaticamente.");
    Print("==========================================");
 
    UpdateChartComment();
