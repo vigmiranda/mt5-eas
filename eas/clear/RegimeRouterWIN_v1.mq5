@@ -2,12 +2,12 @@
 //| RegimeRouterWIN_v1.mq5                                            |
 //| Clear / WIN — roteador de regimes (único EA ativo)                |
 //| R1 Abertura OK → OpenBreak | R2 Explosiva → fora ORB, tarde se R3|
-//| R3 Tendência → Pullback | R4 Lateral → mean-reversion 1 ct       |
-//| STOP DIA 5% único | logs ricos | telinha detalhada               |
-//| v1.01: log a cada barra M5 (entrou / não entrou + motivo)         |
+//| R3 Tendência → Pullback | R4 Lateral → preço médio (até 3 pernas)|
+//| STOP DIA 5% | stop ciclo R4 R$120 | semente Clear alinhável      |
+//| v1.02: R4 preço médio + lotes por faixa de capital                |
 //+------------------------------------------------------------------+
 #property copyright "Vitor / mt5-eas"
-#property version   "1.01"
+#property version   "1.02"
 #property strict
 
 #include <Trade/Trade.mqh>
@@ -35,9 +35,9 @@ enum ENUM_MODULE
 
 //------------------------ Inputs ------------------------------------
 input group "=== Volume / capital virtual ==="
-input double InpClearSaldo        = 5353.45;
-input double InpFixedVolume       = 1.0;      // 1 contrato (medição / risco controlado)
-input double InpMaxVolume         = 5.0;
+input double InpClearSaldo        = 4538.48;  // Saldo Clear atual
+input double InpFixedVolume       = 1.0;      // OB/Pullback: contratos fixos
+input double InpMaxVolume         = 10.0;
 input bool   InpEstimateFees      = true;
 input double InpFeePerSide        = 0.25;
 input bool   InpIncludeFloating   = true;
@@ -96,12 +96,19 @@ input int    InpPB_EntryOffsetPts = 5;
 input int    InpPB_MinRiskPts     = 80;
 input int    InpPB_MaxRiskPts     = 500;
 
-input group "=== Módulo Mean-Reversion (R4) ==="
+input group "=== Módulo R4 Preço Médio (lateral) ==="
 input int    InpMR_BBPeriod       = 20;
 input double InpMR_BBDev          = 2.0;
-input int    InpMR_TargetBufferPts = 10;      // Folga ao mirar a média
-input int    InpMR_SL_BufferPts   = 30;       // Stop além da banda
 input int    InpMR_MinBandPts     = 60;       // Banda muito estreita = skip
+input int    InpPM_MaxLegs        = 3;        // Máx. pernas do pacote
+input double InpPM_CycleStopBRL   = 120.0;    // Stop financeiro do ciclo R4
+input double InpPM_ATR_SpaceMult  = 0.50;     // Espaço entre pernas = ATR × mult
+input int    InpPM_SpaceMinPts    = 100;      // Piso espaçamento
+input int    InpPM_SpaceMaxPts    = 200;      // Teto espaçamento
+input int    InpPM_MinGainPts     = 40;       // Alvo mínimo além do médio
+input double InpPM_LotBand2Cap    = 6500.0;   // Capital ≥ → 2 minis/perna
+input double InpPM_LotBand3Cap    = 8500.0;   // Capital ≥ → 3 minis/perna
+input double InpPM_MaxLotsPerLeg  = 3.0;      // Teto duro por perna
 
 input group "=== Geral ==="
 input ENUM_TIMEFRAMES InpTF       = PERIOD_M5;
@@ -149,6 +156,15 @@ datetime g_lastSkipLog = 0;
 // OpenBreak gestão
 bool     g_beDone = false;
 
+// R4 preço médio (pacote)
+bool     g_pmActive = false;
+int      g_pmDir = 0;          // +1 buy / -1 sell
+int      g_pmLegs = 0;
+double   g_pmAvg = 0.0;
+double   g_pmLastPrice = 0.0;
+double   g_pmLotPerLeg = 1.0;
+bool     g_pmCycleCounted = false; // já contou em g_tradesMR/Today
+
 // Pullback sinal
 int      g_pbDir = 0;
 datetime g_pbSignalBar = 0;
@@ -194,7 +210,7 @@ string ModuleName(const ENUM_MODULE m)
    {
       case MOD_OPENBREAK: return "OpenBreak";
       case MOD_PULLBACK:  return "Pullback";
-      case MOD_MEANREV:   return "MeanRev";
+      case MOD_MEANREV:   return "PrecoMedio";
       default:            return "nenhum";
    }
 }
@@ -276,6 +292,57 @@ double ClampVolume(const double v)
 double CalcVolume() { return ClampVolume(InpFixedVolume); }
 
 //+------------------------------------------------------------------+
+// Lote R4 por faixa de capital (mesma qtd em todas as pernas — sem dobrar)
+double R4LotsPerLeg()
+{
+   double cap = GetCapital();
+   double lots = 1.0;
+   if(cap >= InpPM_LotBand3Cap) lots = 3.0;
+   else if(cap >= InpPM_LotBand2Cap) lots = 2.0;
+   lots = MathMin(lots, InpPM_MaxLotsPerLeg);
+   return ClampVolume(lots);
+}
+
+//+------------------------------------------------------------------+
+double PM_SpacePts()
+{
+   double space = g_atrPts * InpPM_ATR_SpaceMult;
+   if(space < InpPM_SpaceMinPts) space = InpPM_SpaceMinPts;
+   if(space > InpPM_SpaceMaxPts) space = InpPM_SpaceMaxPts;
+   return space;
+}
+
+//+------------------------------------------------------------------+
+void PM_Reset()
+{
+   g_pmActive = false;
+   g_pmDir = 0;
+   g_pmLegs = 0;
+   g_pmAvg = 0.0;
+   g_pmLastPrice = 0.0;
+   g_pmLotPerLeg = 1.0;
+   g_pmCycleCounted = false;
+}
+
+//+------------------------------------------------------------------+
+void PM_SyncFromPosition()
+{
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0) continue;
+      if(!PositionSelectByTicket(ticket)) continue;
+      if(PositionGetInteger(POSITION_MAGIC) != InpMagic) continue;
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+      long typ = PositionGetInteger(POSITION_TYPE);
+      g_pmDir = (typ == POSITION_TYPE_BUY ? 1 : -1);
+      g_pmAvg = PositionGetDouble(POSITION_PRICE_OPEN);
+      g_pmLastPrice = g_pmAvg; // fallback; pernas usam last add
+      return;
+   }
+}
+
+//+------------------------------------------------------------------+
 int CurrentSpreadPoints()
 {
    long spr = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
@@ -340,7 +407,7 @@ bool ShouldFlatOBPosition(const datetime t)
 }
 
 //+------------------------------------------------------------------+
-string GVPrefix() { return StringFormat("RegimeRouterWIN_v100_%I64d_", InpMagic); }
+string GVPrefix() { return StringFormat("RegimeRouterWIN_v102_%I64d_", InpMagic); } // v102 → semente 4538.48
 
 //+------------------------------------------------------------------+
 void EnsureSeedCapital()
@@ -588,9 +655,11 @@ void ResetDayIfNeeded()
    g_lastBarOB = 0;
    g_lastBarAft = 0;
    g_lastStatusBar = 0;
+   PM_Reset();
 
-   LogWhy(StringFormat("NOVO DIA | capital start R$%.2f | STOP DIA %.1f%% = R$%.0f | vol=%.0f magic=%I64d",
-                       g_dayStartEquity, InpStopDiaPct, DailyLossLimitMoney(), CalcVolume(), InpMagic));
+   LogWhy(StringFormat("NOVO DIA | capital start R$%.2f | STOP DIA %.1f%% = R$%.0f | OB/PB vol=%.0f | R4 lote/perna=%.0f magic=%I64d",
+                       g_dayStartEquity, InpStopDiaPct, DailyLossLimitMoney(),
+                       CalcVolume(), R4LotsPerLeg(), InpMagic));
 }
 
 //+------------------------------------------------------------------+
@@ -781,8 +850,10 @@ void ClassifyRegime(const datetime now)
       }
 
       g_regime = REG_R4_LATERAL;
-      g_regimeWhy = StringFormat("ADX %.1f≤%.0f — MeanRev 1ct (medir)", g_adx, InpADX_LateralMax);
-      if(g_tradesPB == 0 && g_tradesMR == 0 && g_tradesToday < InpMaxTradesDay)
+      g_regimeWhy = StringFormat("ADX %.1f≤%.0f — PreçoMédio até %d pernas | lote/perna=%.0f | stopCiclo=R$%.0f",
+                                 g_adx, InpADX_LateralMax, InpPM_MaxLegs, R4LotsPerLeg(), InpPM_CycleStopBRL);
+      // Permite gerir pacote ativo mesmo após contar o ciclo
+      if(g_pmActive || (g_tradesPB == 0 && g_tradesMR == 0 && g_tradesToday < InpMaxTradesDay))
          g_activeMod = MOD_MEANREV;
       else
          g_activeMod = MOD_NONE;
@@ -914,7 +985,8 @@ void ModuleOpenBreak()
 void ManageOpenBreakPosition()
 {
    if(CountOurPositions() <= 0) return;
-   // Só trail posições sem TP (OpenBreak); Pullback/MR têm TP
+   if(g_pmActive) return; // pacote R4 não usa trail OB
+   // Só trail posições sem TP (OpenBreak); Pullback tem TP
    if(!RefreshIndicators()) return;
 
    double trailStart = g_atrPts * InpOB_TrailStartATR;
@@ -1068,9 +1140,139 @@ void ModulePullback()
 }
 
 //+------------------------------------------------------------------+
+bool OpenPM_Leg(const int dir, const double lots, const string tag)
+{
+   if(lots <= 0.0) { LogSkip("PM lote=0"); return false; }
+   int spread = CurrentSpreadPoints();
+   if(InpMaxSpreadPoints > 0 && spread > InpMaxSpreadPoints)
+   {
+      LogSkip(StringFormat("PM spread %d > %d", spread, InpMaxSpreadPoints));
+      return false;
+   }
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   if(ask <= 0.0 || bid <= 0.0) return false;
+
+   trade.SetExpertMagicNumber(InpMagic);
+   trade.SetDeviationInPoints(InpSlippagePoints);
+   trade.SetTypeFillingBySymbol(_Symbol);
+
+   string cmt = StringFormat("%s|%s", InpTradeComment, tag);
+   // Sem SL/TP na ordem — gestão por stop ciclo + alvo BB/médio
+   bool ok = (dir > 0) ? trade.Buy(lots, _Symbol, ask, 0.0, 0.0, cmt)
+                       : trade.Sell(lots, _Symbol, bid, 0.0, 0.0, cmt);
+   if(ok)
+   {
+      double px = (dir > 0 ? ask : bid);
+      double prevVol = g_pmLotPerLeg * g_pmLegs;
+      double newVol = prevVol + lots;
+      if(g_pmLegs <= 0)
+         g_pmAvg = px;
+      else
+         g_pmAvg = (g_pmAvg * prevVol + px * lots) / MathMax(newVol, lots);
+      g_pmLastPrice = px;
+      g_pmLegs++;
+      g_pmDir = dir;
+      g_pmActive = true;
+      g_pmLotPerLeg = lots;
+      LogWhy(StringFormat(
+         "PM PERNA %d/%d %s lots=%.0f @≈%.0f | médio=%.0f | espaço≈%.0f pts | stopCiclo=-R$%.0f | ADX=%.1f BB mid=%.0f",
+         g_pmLegs, InpPM_MaxLegs, (dir > 0 ? "BUY" : "SELL"), lots, px, g_pmAvg,
+         PM_SpacePts(), InpPM_CycleStopBRL, g_adx, g_bbMid));
+   }
+   else
+      PrintFormat("Router: PM ordem falhou ret=%u %s", trade.ResultRetcode(), trade.ResultComment());
+   return ok;
+}
+
+//+------------------------------------------------------------------+
+void PM_CloseCycle(const string reason)
+{
+   if(CountOurPositions() > 0)
+      CloseAllOurs(reason);
+   LogWhy(StringFormat("PM CICLO ENCERRADO | motivo=%s | pernas=%d médio=%.0f dayPnL=R$%.2f",
+                       reason, g_pmLegs, g_pmAvg, DayPnLMoney()));
+   PM_Reset();
+}
+
+//+------------------------------------------------------------------+
+void ManagePrecoMedio()
+{
+   if(!g_pmActive) return;
+   if(CountOurPositions() <= 0)
+   {
+      // broker fechou / netting zerou
+      LogWhy("PM posição sumiu — reset ciclo");
+      PM_Reset();
+      return;
+   }
+
+   PM_SyncFromPosition();
+   if(!RefreshIndicators()) return;
+
+   double pnl = FloatingPnLOurs();
+   if(pnl <= -MathAbs(InpPM_CycleStopBRL))
+   {
+      LogWhy(StringFormat("PM STOP CICLO | floating=R$%.2f <= -R$%.0f", pnl, InpPM_CycleStopBRL));
+      PM_CloseCycle("PM_STOP_CICLO");
+      return;
+   }
+
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double pt = (_Point > 0.0 ? _Point : 1.0);
+   double minGain = InpPM_MinGainPts * pt;
+
+   // Alvo: BB mid, garantindo pelo menos médio+40 pts a favor
+   double target = g_bbMid;
+   if(g_pmDir > 0)
+   {
+      if(target < g_pmAvg + minGain) target = g_pmAvg + minGain;
+      if(bid >= target)
+      {
+         LogWhy(StringFormat("PM ALVO | bid=%.0f target=%.0f médio=%.0f BB=%.0f pnl=R$%.2f",
+                             bid, target, g_pmAvg, g_bbMid, pnl));
+         PM_CloseCycle("PM_ALVO");
+         return;
+      }
+   }
+   else if(g_pmDir < 0)
+   {
+      if(target > g_pmAvg - minGain) target = g_pmAvg - minGain;
+      if(ask <= target)
+      {
+         LogWhy(StringFormat("PM ALVO | ask=%.0f target=%.0f médio=%.0f BB=%.0f pnl=R$%.2f",
+                             ask, target, g_pmAvg, g_bbMid, pnl));
+         PM_CloseCycle("PM_ALVO");
+         return;
+      }
+   }
+
+   // Adiciona perna se preço andou contra o espaçamento
+   if(g_pmLegs >= InpPM_MaxLegs) return;
+   if(g_activeMod != MOD_MEANREV) return;
+
+   double space = PM_SpacePts() * pt;
+   bool add = false;
+   if(g_pmDir > 0 && ask <= g_pmLastPrice - space) add = true;
+   if(g_pmDir < 0 && bid >= g_pmLastPrice + space) add = true;
+   if(!add) return;
+
+   OpenPM_Leg(g_pmDir, g_pmLotPerLeg, StringFormat("PM%d", g_pmLegs + 1));
+}
+
+//+------------------------------------------------------------------+
 void ModuleMeanRev()
 {
-   if(g_activeMod != MOD_MEANREV) return;
+   if(g_activeMod != MOD_MEANREV && !g_pmActive) return;
+
+   // Sempre gerencia pacote aberto
+   if(g_pmActive)
+   {
+      ManagePrecoMedio();
+      return;
+   }
+
    if(g_tradesMR > 0 || g_tradesPB > 0) return;
    if(g_tradesToday >= InpMaxTradesDay) return;
    if(CountOurPositions() > 0) return;
@@ -1083,47 +1285,34 @@ void ModuleMeanRev()
    double bandPts = (_Point > 0.0 ? (g_bbUpper - g_bbLower) / _Point : (g_bbUpper - g_bbLower));
    if(bandPts < InpMR_MinBandPts)
    {
-      LogSkip(StringFormat("MeanRev banda estreita %.0f pts", bandPts));
+      LogSkip(StringFormat("PM banda estreita %.0f pts", bandPts));
       return;
    }
 
    double close1 = iClose(_Symbol, InpTF, 1);
    int dir = 0;
-   // Fecha fora/na banda → mean reversion
-   if(close1 <= g_bbLower) dir = 1;       // oversold → compra
-   else if(close1 >= g_bbUpper) dir = -1; // overbought → venda
+   if(close1 <= g_bbLower) dir = 1;
+   else if(close1 >= g_bbUpper) dir = -1;
    else
    {
-      LogSkip(StringFormat("MeanRev dentro das bandas close=%.0f [%.0f–%.0f]", close1, g_bbLower, g_bbUpper));
+      LogSkip(StringFormat("PM dentro das bandas close=%.0f [%.0f–%.0f]", close1, g_bbLower, g_bbUpper));
       return;
    }
 
-   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   double price = (dir > 0 ? ask : bid);
-   double sl, tp;
-   if(dir > 0)
-   {
-      sl = SnapPrice(g_bbLower - InpMR_SL_BufferPts * (_Point > 0 ? _Point : 1.0));
-      if(MathAbs(_Point - 1.0) < 1e-8) sl = SnapPrice(g_bbLower - InpMR_SL_BufferPts);
-      tp = SnapPrice(g_bbMid - InpMR_TargetBufferPts);
-      if(MathAbs(_Point - 1.0) < 1e-8) tp = SnapPrice(g_bbMid - InpMR_TargetBufferPts);
-   }
-   else
-   {
-      sl = SnapPrice(g_bbUpper + InpMR_SL_BufferPts);
-      if(_Point > 0.0 && MathAbs(_Point - 1.0) > 1e-8)
-         sl = SnapPrice(g_bbUpper + InpMR_SL_BufferPts * _Point);
-      tp = SnapPrice(g_bbMid + InpMR_TargetBufferPts);
-      if(_Point > 0.0 && MathAbs(_Point - 1.0) > 1e-8)
-         tp = SnapPrice(g_bbMid + InpMR_TargetBufferPts * _Point);
-   }
+   double lots = R4LotsPerLeg();
+   LogWhy(StringFormat("PM SETUP dir=%s close=%.0f BB=[%.0f|%.0f|%.0f] ADX=%.1f lots/perna=%.0f espaço=%.0fpts stopCiclo=R$%.0f",
+                       (dir > 0 ? "BUY" : "SELL"), close1, g_bbLower, g_bbMid, g_bbUpper,
+                       g_adx, lots, PM_SpacePts(), InpPM_CycleStopBRL));
 
-   LogWhy(StringFormat("MeanRev setup dir=%d close=%.0f BB=[%.0f %.0f %.0f] ADX=%.1f",
-                       dir, close1, g_bbLower, g_bbMid, g_bbUpper, g_adx));
-
-   if(OpenMarket(dir, sl, tp, "MR"))
-      g_tradesMR++;
+   if(OpenPM_Leg(dir, lots, "PM1"))
+   {
+      if(!g_pmCycleCounted)
+      {
+         g_tradesMR++;
+         g_tradesToday++;
+         g_pmCycleCounted = true;
+      }
+   }
 }
 
 //+------------------------------------------------------------------+
@@ -1143,19 +1332,26 @@ void UpdateChartComment()
                            (g_pbDir > 0 ? g_pbHigh + InpPB_EntryOffsetPts : g_pbLow - InpPB_EntryOffsetPts));
    else if(g_activeMod == MOD_OPENBREAK)
       sinal = "OB aguarda rompimento caixa";
-   else if(g_activeMod == MOD_MEANREV)
-      sinal = "MR aguarda fechamento na banda";
+   else if(g_activeMod == MOD_MEANREV || g_pmActive)
+      sinal = g_pmActive
+         ? StringFormat("PM %d/%d médio=%.0f alvo≈%.0f float=R$%.0f",
+                        g_pmLegs, InpPM_MaxLegs, g_pmAvg,
+                        (g_pmDir > 0 ? MathMax(g_bbMid, g_pmAvg + InpPM_MinGainPts)
+                                     : MathMin(g_bbMid, g_pmAvg - InpPM_MinGainPts)),
+                        FloatingPnLOurs())
+         : "PM aguarda extremo BB";
 
    string txt = StringFormat(
-      "RegimeRouterWIN v1.01 | %s\n"
+      "RegimeRouterWIN v1.02 | %s\n"
       "REGIME: %s\n"
       "porque: %s\n"
       "módulo: %s | %s\n"
       "%s\n"
       "ADX %.1f | EMA%d %.0f / EMA%d %.0f | ATR≈%.0f pts | spread %d\n"
       "BB %.0f | %.0f | %.0f\n"
-      "capital R$%.0f (%s) | dayPnL R$%.0f | STOP -R$%.0f (%.1f%%)%s\n"
-      "trades %d/%d (OB=%d PB=%d MR=%d) | vol=%.0f | magic %I64d\n"
+      "capital R$%.0f (%s) | dayPnL R$%.0f | STOP DIA -R$%.0f (%.1f%%)%s\n"
+      "R4: stopCiclo=R$%.0f | lote/perna=%.0f | espaço=%.0fpts | PM %s\n"
+      "trades %d/%d (OB=%d PB=%d MR=%d) | OB/PB vol=%.0f | magic %I64d\n"
       "última ação: %s\n"
       "último skip: %s",
       _Symbol,
@@ -1167,6 +1363,8 @@ void UpdateChartComment()
       g_bbLower, g_bbMid, g_bbUpper,
       GetCapital(), g_capitalSource, dayPnL, stopLim, InpStopDiaPct,
       (g_dayStopped ? " | PARADO" : ""),
+      InpPM_CycleStopBRL, R4LotsPerLeg(), PM_SpacePts(),
+      (g_pmActive ? "ATIVO" : "idle"),
       g_tradesToday, InpMaxTradesDay, g_tradesOB, g_tradesPB, g_tradesMR, CalcVolume(), InpMagic,
       g_lastAction,
       g_lastSkip
@@ -1202,16 +1400,20 @@ int OnInit()
    ResetDayIfNeeded();
    RefreshIndicators();
 
-   Print("========== RegimeRouterWIN v1.01 ==========");
-   Print("Router: log a cada barra M5 (Router: M5 …) + SKIP/ENTRADA com motivo");
-   PrintFormat("capital=R$%.2f seed=R$%.2f vol=%.0f magic=%I64d STOP DIA=%.1f%%",
-               GetCapital(), g_seedCapital, CalcVolume(), InpMagic, InpStopDiaPct);
+   Print("========== RegimeRouterWIN v1.02 ==========");
+   Print("Router: log a cada barra M5 + R4 preço médio (até 3 pernas, stop ciclo R$120)");
+   PrintFormat("capital=R$%.2f seed=R$%.2f OB/PB vol=%.0f R4 lote/perna=%.0f magic=%I64d STOP DIA=%.1f%% (~R$%.0f)",
+               GetCapital(), g_seedCapital, CalcVolume(), R4LotsPerLeg(), InpMagic,
+               InpStopDiaPct, DailyLossLimitMoney());
    PrintFormat("R1 caixa [%g–%g] pts | OB entry até %02d:%02d flat %02d:%02d",
                InpMinBoxPts, InpMaxBoxPts, InpOB_EntryEndH, InpOB_EntryEndM, InpOB_FlatH, InpOB_FlatM);
-   PrintFormat("Tarde %02d:%02d–%02d:%02d | R3 ADX>=%.0f sepEMA>=%.0f | R4 ADX<=%.0f MeanRev BB",
+   PrintFormat("Tarde %02d:%02d–%02d:%02d | R3 ADX>=%.0f | R4 ADX<=%.0f PreçoMédio maxLegs=%d stopCiclo=R$%.0f espaço=%.2fxATR [%d-%d]",
                InpAftStartH, InpAftStartM, InpAftEndH, InpAftEndM,
-               InpADX_TrendMin, InpEMA_SepMinPts, InpADX_LateralMax);
-   Print("EAs antigos Clear arquivados em eas/clear/archive/ — use SÓ este no gráfico.");
+               InpADX_TrendMin, InpADX_LateralMax, InpPM_MaxLegs, InpPM_CycleStopBRL,
+               InpPM_ATR_SpaceMult, InpPM_SpaceMinPts, InpPM_SpaceMaxPts);
+   PrintFormat("R4 lotes: <%.0f→1 | >=%.0f→2 | >=%.0f→3 minis/perna (sem dobrar na média)",
+               InpPM_LotBand2Cap, InpPM_LotBand2Cap, InpPM_LotBand3Cap);
+   Print("Nova semente GV v102 — ao arrastar de novo aplica R$4538.48 se GV antiga.");
    Print("==========================================");
 
    UpdateChartComment();
@@ -1257,6 +1459,7 @@ void OnTick()
       }
       if(InpFlatOnDailyLoss && CountOurPositions() > 0)
          CloseAllOurs("STOP_DIA");
+      if(g_pmActive) PM_Reset();
       g_regime = REG_RISCO_DIA;
       UpdateChartComment();
       return;
@@ -1267,6 +1470,7 @@ void OnTick()
    {
       if(CountOurPositions() > 0)
          CloseAllOurs("FLAT_16h");
+      if(g_pmActive) PM_Reset();
       return;
    }
 
@@ -1292,12 +1496,16 @@ void OnTick()
    // Gestão OB
    ManageOpenBreakPosition();
 
+   // R4 pacote ativo: gerencia mesmo se regime mudou
+   if(g_pmActive)
+      ManagePrecoMedio();
+
    // Módulos de entrada
    if(g_activeMod == MOD_OPENBREAK)
       ModuleOpenBreak();
    else if(g_activeMod == MOD_PULLBACK)
       ModulePullback();
-   else if(g_activeMod == MOD_MEANREV)
+   else if(g_activeMod == MOD_MEANREV && !g_pmActive)
       ModuleMeanRev();
 }
 //+------------------------------------------------------------------+
