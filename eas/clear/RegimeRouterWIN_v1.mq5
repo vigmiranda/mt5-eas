@@ -2017,7 +2017,7 @@ int OnInit()
    PrintFormat("RR init | CB rangeEnd %02d:%02d ADX>=%.0f | VF dist>=%d ADX<=%.0f | PB ADX>=%.0f PM<=%.0f",
                InpCB_RangeEndH, InpCB_RangeEndM, InpCB_ADXMin, InpVF_MinDistPts, InpVF_ADXMax,
                InpADX_TrendMin, InpADX_LateralMax);
-   Print("RR leyenda | R1-R6/STOP/FORA | OB/PB/CB/VF/PM | ver RegimeRouterWIN_LOG.md");
+   Print("RR legenda | R1-R6/STOP/FORA | OB/PB/CB/VF/PM | ver RegimeRouterWIN_LOG.md");
    Print("==========================================");
 
    UpdateChartComment();
