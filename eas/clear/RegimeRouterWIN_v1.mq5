@@ -437,12 +437,11 @@ void EnsureSeedCapital()
    if(!miss)
    {
       double stored = GlobalVariableGet(keySeed);
-      if(MathAbs(stored - kLegacy) < 0.05 || MathAbs(stored - wanted) > 0.05)
+      // só remigra automaticamente a semente legada 5353.45
+      if(MathAbs(stored - kLegacy) < 0.05)
       {
-         // migra semente legada OU alinha GV ao saldo Clear desejado
          miss = true;
-         if(MathAbs(stored - wanted) > 0.05 && MathAbs(stored - kLegacy) >= 0.05)
-            PrintFormat("Router: GV seed R$%.2f ≠ desejado R$%.2f → atualizando", stored, wanted);
+         PrintFormat("Router: GV ainda com semente legada R$%.2f → R$%.2f", stored, wanted);
       }
    }
 
