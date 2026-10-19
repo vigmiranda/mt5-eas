@@ -7,7 +7,7 @@
 //| STOP DIA 5% | sem meta de lucro / sem preferência 1 trade        |
 //| v1.04: cascata + flags + aborto cedo OB                          |
 //| v1.05: log M5 abreviado (2 linhas) + telinha enxuta              |
-//| v1.06: ContBreak (D) + VWAP fade (E) — flags off por padrão      |
+//| v1.06: ContBreak (D) + VWAP fade (E) — flags on (desligue se ruim)|
 //+------------------------------------------------------------------+
 #property copyright "Vitor / mt5-eas"
 #property version   "1.06"
@@ -61,8 +61,8 @@ input int    InpMaxSpreadPoints   = 40;
 input group "=== Estratégias (ligar / desligar) ==="
 input bool   InpEnableOpenBreak   = true;     // A — OpenBreak (abertura)
 input bool   InpEnablePullback    = true;     // B — Pullback (tendência)
-input bool   InpEnableContBreak   = false;    // D — Continuação / breakout tarde (off até validar)
-input bool   InpEnableVwapFade    = false;    // E — VWAP fade (off até validar)
+input bool   InpEnableContBreak   = true;     // D — Continuação / breakout tarde
+input bool   InpEnableVwapFade    = true;     // E — VWAP fade
 input bool   InpEnablePrecoMedio  = true;     // C — Preço médio (lateral)
 
 input group "=== Caixa abertura (R1/R2) ==="

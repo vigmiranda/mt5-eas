@@ -23,7 +23,7 @@ EAs anteriores (OpenBreak, Pullback, ScalpWIN, TrendWIN) estão em [`eas/clear/a
 
 **RegimeRouterWIN_v1** — cascata M5 (v1.06)
 - **A OpenBreak → B Pullback → D ContBreak → E VwapFade → C Preço médio** (flags `InpEnable*`)
-- **CB / VF começam OFF** — ligue após validar no log (`InpEnableContBreak` / `InpEnableVwapFade`)
+- **CB / VF ligados por padrão** — desligue no input se for mal (`InpEnableContBreak` / `InpEnableVwapFade`)
 - **Lock:** 1 estratégia dona até flat (PM pode abrir pernas)
 - **Aborto cedo do OB** → libera B–E antes das 11h
 - PB só entra com **sinal de pullback** (senão a cascata tenta CB)
@@ -37,7 +37,7 @@ EAs anteriores (OpenBreak, Pullback, ScalpWIN, TrendWIN) estão em [`eas/clear/a
 2. Copie `eas/clear/RegimeRouterWIN_v1.mq5` → `MQL5/Experts/` → **F7**
 3. Arraste no **WIN M5**, Algotrading ON
 4. Log: `RegimeRouterWIN v1.06` + `RR …` (2 linhas/M5) — ver legenda
-5. Para testar CB/VF: ligue as flags no input (default off)
+5. CB/VF já vêm ON — desligue no input se precisar
 
 ### Capital virtual Clear — como funciona
 

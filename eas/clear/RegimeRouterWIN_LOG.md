@@ -54,8 +54,8 @@ Cascata: **OB → PB → CB → VF → PM**.
 |-------|------------|----------------|
 | `OB` | OpenBreak (abertura) | `InpEnableOpenBreak` = on |
 | `PB` | Pullback (tendência + sinal) | `InpEnablePullback` = on |
-| `CB` | ContBreak (continuação / breakout) | `InpEnableContBreak` = **off** |
-| `VF` | VwapFade (reversão à VWAP) | `InpEnableVwapFade` = **off** |
+| `CB` | ContBreak (continuação / breakout) | `InpEnableContBreak` = **on** |
+| `VF` | VwapFade (reversão à VWAP) | `InpEnableVwapFade` = **on** |
 | `PM` | Preço médio (lateral, até 3 pernas) | `InpEnablePrecoMedio` = on |
 | `-` | Nenhum módulo ativo | — |
 
