@@ -1,0 +1,41 @@
+input
+  StopPts(40.0);
+  GainPts(60.0);
+  HorarioFim(1750);
+
+var
+  tick : Float;
+  sl : Float;
+  tp : Float;
+
+begin
+  tick := MinPriceIncrement;
+  if (tick <= 0) then
+    tick := 0.5;
+
+  if (Time >= HorarioFim) then
+  begin
+    if HasPosition then
+      ClosePosition;
+  end
+  else if (not HasPosition) then
+  begin
+    if (Close > Close[1]) then
+    begin
+      BuyAtMarket;
+      sl := Close - StopPts * tick;
+      tp := Close + GainPts * tick;
+      SellToCoverStop(sl, sl);
+      SellToCoverLimit(tp);
+    end;
+  end
+  else if IsBought then
+  begin
+    sl := BuyPrice - StopPts * tick;
+    tp := BuyPrice + GainPts * tick;
+    SellToCoverStop(sl, sl);
+    SellToCoverLimit(tp);
+  end;
+
+  Plot(VWAP(1));
+end;

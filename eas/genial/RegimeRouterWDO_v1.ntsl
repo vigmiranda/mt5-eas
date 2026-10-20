@@ -1,9 +1,5 @@
-{ RegimeRouterWDO_v1 - Genial / Profit Pro (NTSL) }
-{ Cascata M5: OB AB OF PB NY CB IB RD LF VF }
-{ Lock ate flat | STOP DIA | sem preco medio }
-{ v1.02 - sintaxe ASCII compativel Profit }
 input
-  SeedCapital(0);
+  SeedCapital(0.0);
   StopDiaPct(5.0);
   StopDiaReais(250.0);
   MaxTradesDay(12);
@@ -168,7 +164,7 @@ begin
   emaF := MediaExp(EMAFast, Close);
   emaS := MediaExp(EMASlow, Close);
   adxV := ADX(ADXPeriod, 14);
-  vwapV := VWAP;
+  vwapV := VWAP(1);
   atrV := AvgTrueRange(IB_ATRPeriod, 0);
   atrAvg := AvgTrueRange(20, 0);
 
