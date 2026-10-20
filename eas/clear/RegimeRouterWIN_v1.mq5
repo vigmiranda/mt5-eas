@@ -8,9 +8,10 @@
 //| v1.04: cascata + flags + aborto cedo OB                          |
 //| v1.05: log M5 abreviado (2 linhas) + telinha enxuta              |
 //| v1.06: ContBreak (D) + VWAP fade (E) — flags on (desligue se ruim)|
+//| v1.07: VF liberado em R2 (mesmos critérios); aviso se chart ≠ InpTF|
 //+------------------------------------------------------------------+
 #property copyright "Vitor / mt5-eas"
-#property version   "1.06"
+#property version   "1.07"
 #property strict
 
 #include <Trade/Trade.mqh>
@@ -1294,11 +1295,12 @@ void ClassifyRegime(const datetime now)
       return;
    }
 
-   // --- E: VWAP fade — extensão vs VWAP (não em R2) ---
-   if(InpEnableVwapFade && g_tradesVF == 0 && !g_r2Day && PatternVwapFade(why))
+   // --- E: VWAP fade — extensão vs VWAP (também em R2; PM continua bloqueado) ---
+   if(InpEnableVwapFade && g_tradesVF == 0 && PatternVwapFade(why))
    {
       g_regime = REG_R6_VWAP_FADE;
-      g_regimeWhy = StringFormat("cascata E | %s%s", why, early);
+      g_regimeWhy = StringFormat("cascata E | %s%s%s", why, early,
+                                 (g_r2Day ? " [R2]" : ""));
       g_activeMod = MOD_VWAPFADE;
       return;
    }
@@ -1315,7 +1317,7 @@ void ClassifyRegime(const datetime now)
    if(g_r2Day)
    {
       g_regime = REG_R2_EXPLOSIVA;
-      g_regimeWhy = StringFormat("R2 — PM/VF bloqueados; sem fit PB/CB | %s", why);
+      g_regimeWhy = StringFormat("R2 — PM bloqueado; sem fit PB/CB/VF | %s", why);
       g_activeMod = MOD_NONE;
       return;
    }
@@ -1955,7 +1957,7 @@ void UpdateChartComment()
       : (g_obAborted ? "OBabort" : "free");
 
    string txt = StringFormat(
-      "RR v1.06 %s | %s %s | %s\n"
+      "RR v1.07 %s | %s %s | %s\n"
       "%s\n"
       "OB%d PB%d CB%d VF%d PM%d | %s | cx=%.0f(%s)\n"
       "ADX%.0f EMA%.0f/%.0f ATR%.0f VWAP%.0f spr%d\n"
@@ -1984,6 +1986,13 @@ int OnInit()
    if(!IsWinSymbol())
       Print("Router: aviso — símbolo não parece WIN: ", _Symbol);
 
+   // Indicadores usam InpTF (M5), mas o gráfico deve ser o mesmo TF p/ acompanhar
+   if(Period() != InpTF)
+   {
+      PrintFormat("RR ! | AVISO chart=%s ≠ InpTF=%s — arraste o EA no gráfico M5 (não afrouxa regra; só visual/ops)",
+                  EnumToString((ENUM_TIMEFRAMES)Period()), EnumToString(InpTF));
+   }
+
    trade.SetExpertMagicNumber(InpMagic);
    trade.SetDeviationInPoints(InpSlippagePoints);
    trade.SetTypeFillingBySymbol(_Symbol);
@@ -2006,8 +2015,9 @@ int OnInit()
    ResetDayIfNeeded();
    RefreshIndicators();
 
-   Print("========== RegimeRouterWIN v1.06 ==========");
+   Print("========== RegimeRouterWIN v1.07 ==========");
    Print("RR init | cascata OB>PB>CB>VF>PM | lock flat | sem meta | log curto");
+   Print("RR init | v1.07 VF também em R2 (critérios iguais) | PM continua bloqueado em R2");
    PrintFormat("RR init | flags OB=%d PB=%d CB=%d VF=%d PM=%d | maxT=%d | STOP=%.0f%% (~R$%.0f)",
                (InpEnableOpenBreak ? 1 : 0), (InpEnablePullback ? 1 : 0),
                (InpEnableContBreak ? 1 : 0), (InpEnableVwapFade ? 1 : 0), (InpEnablePrecoMedio ? 1 : 0),

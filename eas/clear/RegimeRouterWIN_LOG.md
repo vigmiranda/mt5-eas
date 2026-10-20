@@ -1,4 +1,4 @@
-# RegimeRouterWIN — legenda do log (v1.06+)
+# RegimeRouterWIN — legenda do log (v1.07+)
 
 No Experts do MT5 a coluna **Mensagem** é estreita. Por isso o pulse M5 usa **2 linhas curtas** com prefixo `RR` e abreviações.
 
@@ -35,7 +35,7 @@ Outros prefixes:
 | Abrev | Significado |
 |-------|-------------|
 | `R1` | Abertura OK — caixa válida, OpenBreak elegível |
-| `R2` | Abertura explosiva / caixa inválida — sem ORB; PM/VF bloqueados |
+| `R2` | Abertura explosiva / caixa inválida — sem ORB; **PM** bloqueado; **VF liberado** (v1.07+) |
 | `R3` | Tendência — Pullback com **sinal** |
 | `R4` | Lateral — Preço médio elegível |
 | `R5` | Continuação — ContBreak (rompimento range manhã) |
@@ -94,14 +94,17 @@ Com posição (ou pernas PM), fica em **LOCK** nessa estratégia até flat.
 Após range manhã (09:00 → `InpCB_RangeEnd`, default 11:00), com ADX ≥ `InpCB_ADXMin` e EMAs alinhadas: rompimento da máx/mín da manhã no sentido da tendência. 1 entrada, TP por R:R.
 
 **VF (VwapFade)**  
-Preço longe da VWAP de sessão (≥ `InpVF_MinDistPts`) e ADX ≤ `InpVF_ADXMax`: fade de volta à VWAP (1 entrada, TP = VWAP). Bloqueado em dia R2.
+Preço longe da VWAP de sessão (≥ `InpVF_MinDistPts`) e ADX ≤ `InpVF_ADXMax`: fade de volta à VWAP (1 entrada, TP = VWAP).  
+**v1.07:** também elegível em dia **R2** (mesmos critérios de distância/ADX — não afrouxa entrada). PM continua bloqueado em R2.
+
+**Ops (sem afrouxar regra):** arraste o EA no gráfico **WIN M5**. Se o chart ≠ `InpTF`, o init loga `RR ! | AVISO chart≠InpTF`.
 
 ---
 
 ## Telinha do gráfico (`Comment`)
 
 ```
-RR v1.06 WIN$N | R5 CB | CB rng 128400-128820
+RR v1.07 WIN$N | R5 CB | CB rng 128400-128820
 ...
 OB1 PB1 CB0 VF0 PM1 | free | cx=420(OK)
 ```
