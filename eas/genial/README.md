@@ -1,69 +1,58 @@
 # Genial · Profit Pro — RegimeRouterWDO
 
-Conta de **simulação** Genial Investimentos no **Profit Pro** (Nelogica), ativo **WDO** M5.
-
-Objetivo: rodar **~1 mês** em conta teste, mesma mecânica do RegimeRouterWIN (cascata + lock + flags + STOP DIA), com estratégias que fazem sentido no dólar.
+Conta **simulação** Genial · **Profit Pro** · **WDO** M5 · teste ~**1 mês**.
 
 | Arquivo | Uso |
 |---------|-----|
-| [`RegimeRouterWDO_v1.ntsl`](RegimeRouterWDO_v1.ntsl) | Colar no Editor de Estratégias |
-| [`RegimeRouterWDO_LOG.md`](RegimeRouterWDO_LOG.md) | Legenda `mod` / `st` / telinha |
+| [`RegimeRouterWDO_v1.ntsl`](RegimeRouterWDO_v1.ntsl) | Colar no Editor (v1.01) |
+| [`RegimeRouterWDO_LOG.md`](RegimeRouterWDO_LOG.md) | Legenda mod/st |
 
 ---
 
-## Cascata WDO (v1.00)
+## Cascata v1.01 (10 módulos, flags ON)
 
-`OpenBreak → Pullback → ContBreak → VwapFade`
+```
+OB → AB → OF → PB → NY → CB → IB → RD → LF → VF
+```
 
-- **Sem preço médio** no v1 (WDO + notícia USD / gap).
-- Flags todas **ON** — desligue no input se for mal.
-- STOP DIA: `SeedCapital×5%` **ou** `StopDiaReais` se semente = 0.
+| # | Módulo | Por que no WDO |
+|---|--------|----------------|
+| OB | OpenBreak | Abertura B3 |
+| AB | Asia/Overnight break | Rompe H/L do dia anterior |
+| OF | Overnight Fibo | Fade 50–61,8% do range anterior |
+| PB | Pullback | Trend day com correção |
+| NY | NY Open | 10:30 BRT — break ou fade da micro-caixa |
+| CB | ContBreak | Continuação do range manhã |
+| IB | Inside/Compression | Compressão ATR → expansão |
+| RD | Retest day | Reteste abertura / extremos do dia |
+| LF | Lunch fade | Mean-revert curto 12h–14h |
+| VF | VWAP fade | Extensão vs VWAP |
+
+Sem preço médio. Desligue no input o que for mal (**uma flag por vez**).
 
 ---
 
-## Instalação (sim Genial · 1 mês)
+## Instalação (sim · 1 mês)
 
-1. Abra o **Profit Pro** logado na Genial (conta **simulação**).
-2. Menu **Estratégias → Editor de Estratégias → Nova estratégia de execução**.
-3. Cole o conteúdo de `RegimeRouterWDO_v1.ntsl` → **Compilar** (0 erros).
-4. Salve com nome `RegimeRouterWDO_v1`.
-5. **Estratégias → Automação de Estratégias → Nova Automação**:
+1. Profit Pro (Genial) → **Editor de Estratégias** → nova execução  
+2. Cole `RegimeRouterWDO_v1.ntsl` → **Compilar**  
+3. **Automação de Estratégias** → Nova:
    - Conta: **Simulação**
-   - Estratégia: `RegimeRouterWDO_v1`
-   - Ativo: **WDO$** / vencimento atual (ex. WDOX25)
-   - Periodicidade: **5 minutos**
-   - Quantidade por ordem: **1** (comece assim)
-   - Quantidade máx. posição: **1**
-6. Aba **Risco** (recomendado): alinhar stop diário da automação com o do robô (ou um pouco mais folgado).
-7. **Ativar** a automação e deixar o Profit aberto no pregão (ou PC estável).
-
-### Ajustes obrigatórios antes do mês
-
-| Input | O que fazer |
-|-------|-------------|
-| `SeedCapital` | Saldo da sim Genial em R$ (se souber) |
-| `StopDiaReais` | Se `SeedCapital=0`, defina o STOP em R$ (ex. 5% do saldo sim) |
-| Quantidade | 1 mini no primeiro mês |
-
-> **Não inventamos o saldo da sua sim.** Sem `SeedCapital`, o freio usa `StopDiaReais` — ajuste esse valor.
+   - Ativo: **WDO** (vencimento atual) · **M5**
+   - Qtd por ordem: **1** · Máx posição: **1**
+4. Ajuste risco:
+   - `SeedCapital` = saldo da sim **ou**
+   - `StopDiaReais` ≈ 5% desse saldo
+5. Ative e deixe o Profit rodando no pregão.
 
 ---
 
-## Checklist do mês de teste
+## Checklist do mês
 
-- [ ] Compilou sem erro no Editor  
-- [ ] Automação na **simulação** (não real)  
-- [ ] WDO M5 + 1 contrato  
-- [ ] STOP configurado (`SeedCapital` ou `StopDiaReais`)  
-- [ ] Anotar por dia: trades OB/PB/CB/VF, dayPnL, se STOP bateu  
-- [ ] Se um módulo for mal → flag `Enable*` = false (uma mudança por vez)
+- [ ] Compilou 0 erros  
+- [ ] Automação na **sim** (não real)  
+- [ ] STOP alinhado ao saldo da sim  
+- [ ] Log/telinha: quais `mod` mais entram  
+- [ ] Se um módulo sangrar → `Enable* = false`
 
----
-
-## Notas Profit / Genial
-
-- Automação em **simulação** no Profit Pro costuma ser **gratuita**; conta real exige módulo pago.
-- PC precisa permanecer com Profit + automação ativos no horário do pregão.
-- Day trade WDO: flat padrão **17:50** (`FlatHora`).
-
-Regras do projeto: [`../../REGRAS.md`](../../REGRAS.md).
+Regras: [`../../REGRAS.md`](../../REGRAS.md).

@@ -1,71 +1,68 @@
-# RegimeRouterWDO — legenda (Profit Pro / Genial) v1.00
+# RegimeRouterWDO — legenda (Profit Pro / Genial) v1.01
 
-Plataforma: **Profit Pro** (Nelogica) · Corretora: **Genial** · Ativo: **WDO** · TF: **M5**  
-Linguagem: **NTSL** · Arquivo: [`RegimeRouterWDO_v1.ntsl`](RegimeRouterWDO_v1.ntsl)
-
-Mecânica igual ao RegimeRouterWIN (cascata + lock + flags + STOP DIA), **sem preço médio** no WDO v1.
+Plataforma: **Profit Pro** · Corretora: **Genial (sim)** · Ativo: **WDO** · TF: **M5**  
+Arquivo: [`RegimeRouterWDO_v1.ntsl`](RegimeRouterWDO_v1.ntsl)
 
 ---
 
-## Cascata
+## Cascata (ordem)
 
-`OB → PB → ContBreak → VwapFade`
+```
+OB → AB → OF → PB → NY → CB → IB → RD → LF → VF
+```
 
-| mod | Estratégia | Por que no WDO |
-|-----|------------|----------------|
-| 1 | **OB** OpenBreak | Rompimento da caixa 09:00–09:15 (abertura B3) |
-| 2 | **PB** Pullback | Dia de tendência USD com pullback na EMA |
-| 3 | **CB** ContBreak | Trend day sem pullback — rompe range manhã (até 11:00) |
-| 4 | **VF** VwapFade | WDO mean-reverte muito à VWAP de sessão |
-| — | ~~PM~~ | **Não** no v1 — média/grid no dólar sofre com notícia/gap |
+| mod | Flag | Estratégia | Ideia |
+|-----|------|------------|-------|
+| 1 | `EnableOpenBreak` | **OB** OpenBreak | Rompe caixa 09:00–09:15 B3 |
+| 2 | `EnableAsiaBreak` | **AB** Asia/Overnight break | Rompe H/L do **dia anterior** |
+| 3 | `EnableOvernightFibo` | **OF** Overnight Fibo | Fade na zona 50–61,8% do range anterior → meio |
+| 4 | `EnablePullback` | **PB** Pullback | Tendência + pullback EMA |
+| 5 | `EnableNYOpen` | **NY** NY Open | Micro-caixa 10:30–10:45: break (ADX alto) ou fade (ADX baixo) |
+| 6 | `EnableContBreak` | **CB** ContBreak | Rompe range manhã (até 11:00) com tendência |
+| 7 | `EnableInsideBreak` | **IB** Inside/Compression | ATR comprimido → rompe lookback |
+| 8 | `EnableRetestDay` | **RD** Retest day | Reteste abertura / PDL / PDH com rejeição |
+| 9 | `EnableLunchFade` | **LF** Lunch fade | 12:00–14:00 fade curto à VWAP |
+| 10 | `EnableVwapFade` | **VF** VWAP fade | Extensão vs VWAP (resto do dia) |
 
-OB sem indício (caixa R2, janela 10:30, flag off, já operou) → libera PB/CB/VF **antes das 11h**.
+**Sem preço médio / grid** no WDO.  
+**Filtro WIN×WDO** ainda não (multiativo no NTSL — candidata v1.02).
+
+Lock: `lock=mod` até flat. OB aborta cedo → libera AB…VF.
 
 ---
 
-## statusCode (`st=`)
+## statusCode (`st`)
 
 | st | Significado |
 |----|-------------|
-| 0 | IDLE — sem fit |
-| 1 | OB (aguardando / janela) |
-| 2 | PB ativo |
-| 3 | CB ativo |
-| 4 | VF ativo |
-| 5 | STOP DIA |
+| 0 | IDLE |
+| 1–10 | Módulo correspondente (tabela acima) |
+| 5* | Também usado como STOP DIA quando `st=5` e sem posição NY — ver telinha `STOP` |
 | 6 | FLAT fim do dia |
-| 7 | R2 (caixa inválida) |
+| 7 | R2 caixa inválida |
 | 8 | Teto `MaxTradesDay` |
+
+> Em lock, `mod`/`lock` mostram o dono; `dPnL` e `STOP=-` mostram o freio do dia.
 
 ---
 
-## Telinha (PlotText)
+## Telinha
 
 ```
-RR WDO v1 | mod=3 lock=0 st=3 | ver RegimeRouterWDO_LOG.md
-dPnL=... STOP=-... t=0/8 OB0 PB0 CB0 VF0 ADX=... cx=...
+RR WDO v1.01 | mod=5 lock=0 st=5
+dPnL=... STOP=-... t=0/12 ADX=... cx=...
+OB0 AB0 OF0 PB0 NY0 CB0 IB0 RD0 LF0 VF0
 ```
-
-| Campo | Significado |
-|-------|-------------|
-| `mod` | Módulo da cascata (0–4) |
-| `lock` | Dono da posição até flat (0 = livre) |
-| `st` | statusCode |
-| `dPnL` | Resultado do dia (DailyResult c/ floating) |
-| `STOP` | Limite de perda do dia em R$ |
-| `t` | Trades / teto |
-| `cx` | Tamanho da caixa em ticks |
 
 ---
 
 ## STOP DIA
 
-1. Se `SeedCapital > 0` → `STOP = SeedCapital × StopDiaPct%`  
-2. Senão → `StopDiaReais` (default 250 — **ajuste** ao risco da sim)
+- `SeedCapital > 0` → `SeedCapital × StopDiaPct%`  
+- Senão → `StopDiaReais` (**ajuste** ao saldo da sim Genial)
 
 ---
 
-## Pontos / ticks
+## Ticks
 
-Inputs `*Pts` são em **ticks** (`MinPriceIncrement`, tipicamente **0,5** no WDO).  
-Ex.: `OB_StopPts(40)` ≈ 40 × 0,5 = **20,0** no preço.
+`*Pts` = ticks × `MinPriceIncrement` (≈ **0,5** no WDO).
