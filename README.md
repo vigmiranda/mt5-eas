@@ -4,12 +4,13 @@ Repositório: [vigmiranda/mt5-eas](https://github.com/vigmiranda/mt5-eas)
 
 **Regras do projeto (valem em qualquer plataforma):** [`REGRAS.md`](REGRAS.md) · agentes: [`AGENTS.md`](AGENTS.md)
 
-Automação em **MetaTrader 5** para duas corretoras:
+Automação multiplataforma:
 
-| Pasta | Corretora | Mercado |
-|-------|-----------|---------|
-| `eas/nomo/` | Nomo | Forex / CFDs |
-| `eas/clear/` | Clear | Minicontratos B3 (WIN) |
+| Pasta | Corretora / plataforma | Mercado |
+|-------|--------------------------|---------|
+| `eas/nomo/` | Nomo · **MT5** | Forex / CFDs |
+| `eas/clear/` | Clear · **MT5** | Minicontratos B3 (WIN) |
+| `eas/genial/` | Genial · **Profit Pro (NTSL)** | Minicontrato dólar (WDO) |
 
 ---
 
@@ -80,6 +81,22 @@ Demais EAs Nomo (ScalpXAU, Pattern, Trend*, Grid BTC, etc.) estão em [`eas/nomo
 
 ---
 
+## Genial (Profit Pro · NTSL)
+
+| Ativo | Timeframe | Estratégia | Versão | Papel |
+|-------|-----------|------------|--------|-------|
+| WDO$ | M5 | **RegimeRouterWDO_v1** | 1.01 | Único robô ativo na sim Genial |
+
+**RegimeRouterWDO_v1** — cascata larga p/ teste Genial (dólar)
+- `OB → AB → OF → PB → NY → CB → IB → RD → LF → VF` (flags ON)
+- Inclui NY Open, fibo overnight, compressão, reteste do dia, lunch fade…
+- **Sem preço médio** · STOP via `SeedCapital` ou `StopDiaReais` · 1 contrato na sim
+- Pasta: [`eas/genial/`](eas/genial/) · guia: [`eas/genial/README.md`](eas/genial/README.md) · legenda: [`eas/genial/RegimeRouterWDO_LOG.md`](eas/genial/RegimeRouterWDO_LOG.md)
+
+**Instalação rápida:** Profit Pro → Editor de Estratégias → colar `.ntsl` → Automação na **conta simulação** → WDO M5 · qtd 1. Detalhes no README da pasta.
+
+---
+
 ## Instalação geral
 
 1. Copie o `.mq5` da pasta correta (`nomo` ou `clear`) para `MetaTrader 5/MQL5/Experts/`
@@ -97,11 +114,15 @@ Tendência + ADX + SL por ATR, **sem TP fixo**. Soft lock arma depois de X ATR d
 ```
 eas/
   clear/
-    RegimeRouterWIN_v1.mq5  # Clear / WIN roteador de regimes (ativo)
-    archive/                # EAs antigos (não usar no real)
+    RegimeRouterWIN_v1.mq5   # Clear / MT5 / WIN (ativo)
+    archive/
   nomo/
-    RegimeRouterXAU_v1.mq5  # Nomo / XAUUSD roteador (ativo)
-    archive/                # EAs antigos Nomo
+    RegimeRouterXAU_v1.mq5   # Nomo / MT5 / XAU (ativo)
+    archive/
+  genial/
+    RegimeRouterWDO_v1.ntsl  # Genial / Profit Pro / WDO (sim)
+    README.md
+    RegimeRouterWDO_LOG.md
 ```
 
 ## Aviso

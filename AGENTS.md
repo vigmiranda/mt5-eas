@@ -14,4 +14,4 @@ Resumo obrigatório:
 8. Nova corretora **herda** `REGRAS.md`; só documentar o específico.
 9. **Magic/comment únicos** por EA (nunca compartilhar magic).
 
-Regras são **multiplataforma** (Clear, Nomo e futuras). Detalhes por corretora ficam em `eas/clear/`, `eas/nomo/` e no `README.md`.
+Regras são **multiplataforma** (Clear, Nomo, Genial/Profit e futuras). Detalhes por corretora ficam em `eas/clear/`, `eas/nomo/`, `eas/genial/` e no `README.md`.
