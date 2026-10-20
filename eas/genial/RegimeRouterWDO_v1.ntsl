@@ -1,3 +1,7 @@
+{ RegimeRouterWDO v1.04 — Genial/Profit Pro/WDO M5
+  Cascata OB>AB>OF>PB>NY>CB>IB>RD>LF>VF | lock ate flat
+  v1.04: VF elegivel em R2 (mesmos criterios dist/ADX); OB off em R2
+  LF continua bloqueado em R2 (janela especifica). Automacao em M5. }
 input
   SeedCapital(0.0);
   StopDiaPct(5.0);
@@ -725,8 +729,8 @@ begin
         else
           activeMod := 0;
       end
-      {--- 10 VF ---}
-      else if (EnableVwapFade = 1) and (tradesVF = 0) and (r2Day = 0) and (adxV <= VF_ADXMax) then
+      {--- 10 VF (tambem em R2; criterios dist/ADX iguais) ---}
+      else if (EnableVwapFade = 1) and (tradesVF = 0) and (adxV <= VF_ADXMax) then
       begin
         distPts := Abs(Close - vwapV) / tick;
         if (distPts >= VF_MinDistPts) then
