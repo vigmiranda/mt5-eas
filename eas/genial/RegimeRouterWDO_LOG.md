@@ -1,4 +1,4 @@
-# RegimeRouterWDO — legenda (Profit Pro / Genial) v1.01
+# RegimeRouterWDO — legenda (Profit Pro / Genial) v1.02
 
 Plataforma: **Profit Pro** · Corretora: **Genial (sim)** · Ativo: **WDO** · TF: **M5**  
 Arquivo: [`RegimeRouterWDO_v1.ntsl`](RegimeRouterWDO_v1.ntsl)
