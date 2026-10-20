@@ -1,4 +1,4 @@
-# RegimeRouterWDO — legenda (Profit Pro / Genial) v1.02
+# RegimeRouterWDO — legenda (Profit Pro / Genial) v1.04
 
 Plataforma: **Profit Pro** · Corretora: **Genial (sim)** · Ativo: **WDO** · TF: **M5**  
 Arquivo: [`RegimeRouterWDO_v1.ntsl`](RegimeRouterWDO_v1.ntsl)
@@ -21,11 +21,13 @@ OB → AB → OF → PB → NY → CB → IB → RD → LF → VF
 | 6 | `EnableContBreak` | **CB** ContBreak | Rompe range manhã (até 11:00) com tendência |
 | 7 | `EnableInsideBreak` | **IB** Inside/Compression | ATR comprimido → rompe lookback |
 | 8 | `EnableRetestDay` | **RD** Retest day | Reteste abertura / PDL / PDH com rejeição |
-| 9 | `EnableLunchFade` | **LF** Lunch fade | 12:00–14:00 fade curto à VWAP |
-| 10 | `EnableVwapFade` | **VF** VWAP fade | Extensão vs VWAP (resto do dia) |
+| 9 | `EnableLunchFade` | **LF** Lunch fade | 12:00–14:00 fade curto à VWAP (**bloqueado em R2**) |
+| 10 | `EnableVwapFade` | **VF** VWAP fade | Extensão vs VWAP (**também em R2**, v1.04) |
 
-**Sem preço médio / grid** no WDO.  
-**Filtro WIN×WDO** ainda não (multiativo no NTSL — candidata v1.02).
+**Sem preço médio / grid** no WDO.
+
+**R2** = caixa fora de `[BoxMinPts–BoxMaxPts]` → OB off; LF off; **VF on** (mesmos `VF_MinDistPts` / `VF_ADXMax`).  
+AB / OF / PB / NY / CB / IB / RD seguem se fit (não dependem de R2).
 
 Lock: `lock=mod` até flat. OB aborta cedo → libera AB…VF.
 
@@ -37,22 +39,10 @@ Lock: `lock=mod` até flat. OB aborta cedo → libera AB…VF.
 |----|-------------|
 | 0 | IDLE |
 | 1–10 | Módulo correspondente (tabela acima) |
-| 5* | Também usado como STOP DIA quando `st=5` e sem posição NY — ver telinha `STOP` |
-| 6 | FLAT fim do dia |
-| 7 | R2 caixa inválida |
-| 8 | Teto `MaxTradesDay` |
+| 13 | R2 — cascata sem fit (PM-style hole; VF/PB/… não bateram) |
+| 14 | Teto `MaxTradesDay` |
 
-> Em lock, `mod`/`lock` mostram o dono; `dPnL` e `STOP=-` mostram o freio do dia.
-
----
-
-## Telinha
-
-```
-RR WDO v1.01 | mod=5 lock=0 st=5
-dPnL=... STOP=-... t=0/12 ADX=... cx=...
-OB0 AB0 OF0 PB0 NY0 CB0 IB0 RD0 LF0 VF0
-```
+Em lock, `mod`/`lock` mostram o dono.
 
 ---
 
@@ -61,8 +51,16 @@ OB0 AB0 OF0 PB0 NY0 CB0 IB0 RD0 LF0 VF0
 - `SeedCapital > 0` → `SeedCapital × StopDiaPct%`  
 - Senão → `StopDiaReais` (**ajuste** ao saldo da sim Genial)
 
+Migração futura Clear → Genial: gravar o capital alocado em `SeedCapital`.
+
 ---
 
 ## Ticks
 
 `*Pts` = ticks × `MinPriceIncrement` (≈ **0,5** no WDO).
+
+---
+
+## Ops
+
+Automação no gráfico/período **M5** (não M1). Não afrouxa MaxBox / ADX / candle — só remove o bloqueio de regime do VF em R2 (DNA do WIN v1.07).
