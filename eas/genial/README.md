@@ -32,18 +32,29 @@ Sem preço médio. Desligue no input o que for mal (**uma flag por vez**).
 
 ---
 
+## Onde ver o saldo da simulação
+
+1. Fecha o Editor (volta à tela principal do Profit).  
+2. Confira no canto da boleta / Chart Trading: conta **S Sim …**.  
+3. Embaixo, aba **Custódia** (ou **Day Trade**): olhe **Saldo** / **Patrimônio** / **Líquido**.  
+4. Alternativa: menu **Negociação** → opções de conta / financeiro da sim.
+
+Anota esse valor e usa em `SeedCapital` (ou 5% dele em `StopDiaReais`).
+
 ## Instalação (sim · 1 mês)
 
 1. Profit Pro (Genial) → **Editor de Estratégias** → nova execução  
-2. Cole `RegimeRouterWDO_v1.ntsl` → **Compilar**  
-3. **Automação de Estratégias** → Nova:
+2. Cole o raw da main (texto puro, sem HTML):  
+   `https://raw.githubusercontent.com/vigmiranda/mt5-eas/main/eas/genial/RegimeRouterWDO_v1.ntsl`  
+3. **Compilar** (se falhar, teste antes o smoke: `RegimeRouterWDO_smoke.ntsl`)  
+4. **Automação de Estratégias** → Nova:
    - Conta: **Simulação**
    - Ativo: **WDO** (vencimento atual) · **M5**
    - Qtd por ordem: **1** · Máx posição: **1**
-4. Ajuste risco:
-   - `SeedCapital` = saldo da sim **ou**
-   - `StopDiaReais` ≈ 5% desse saldo
-5. Ative e deixe o Profit rodando no pregão.
+5. `SeedCapital` = saldo da sim **ou** `StopDiaReais` ≈ 5%  
+6. Ative e deixe o Profit aberto no pregão.
+
+**Nota v1.03:** `VWAP` no Profit exige parâmetro — usamos `VWAP(1)` (diário).
 
 ---
 
