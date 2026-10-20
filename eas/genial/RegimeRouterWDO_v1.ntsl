@@ -1,0 +1,446 @@
+{------------------------------------------------------------------------------}
+{ RegimeRouterWDO_v1 — Genial / Profit Pro (NTSL)                              }
+{ Cascata M5: OB → PB → ContBreak → VwapFade                                   }
+{ Lock até flat | STOP DIA | sem meta de lucro                                 }
+{ Sem preço médio no WDO v1 (notícia USD / gap)                                }
+{ Conta: simulação Genial — ~1 mês de teste                                    }
+{ v1.00                                                                        }
+{------------------------------------------------------------------------------}
+Input
+  { === Risco do dia === }
+  SeedCapital(0);          { Saldo sim Genial em R$ — 0 = usa só StopDiaReais }
+  StopDiaPct(5.0);         { % sobre SeedCapital (se SeedCapital > 0) }
+  StopDiaReais(250.0);     { STOP DIA fixo em R$ se SeedCapital = 0 — AJUSTAR }
+  MaxTradesDay(8);         { Teto de segurança }
+  FlatHora(1750);          { Zera posição (HHMM) }
+
+  { === Flags === }
+  EnableOpenBreak(true);
+  EnablePullback(true);
+  EnableContBreak(true);
+  EnableVwapFade(true);
+
+  { === Caixa abertura (OB) === }
+  BoxStart(900);
+  BoxEnd(915);
+  BoxMinPts(20);           { Mín. range em ticks (× MinPriceIncrement ≈ 0,5) }
+  BoxMaxPts(120);          { Máx. — acima = R2 }
+
+  { === OpenBreak === }
+  OB_EntryEnd(1030);
+  OB_BreakBufferPts(4);
+  OB_StopPts(40);
+  OB_GainPts(60);
+
+  { === Pullback / tendência === }
+  EMAFast(20);
+  EMASlow(50);
+  ADXPeriod(14);
+  ADXTrendMin(20);
+  EMA_SepMinPts(15);
+  PB_EntryOffsetPts(2);
+  PB_BufferPts(4);
+  PB_MinRiskPts(20);
+  PB_MaxRiskPts(100);
+  PB_RewardRisk(2.0);
+
+  { === ContBreak === }
+  CB_RangeEnd(1100);
+  CB_ADXMin(22);
+  CB_BreakBufferPts(4);
+  CB_MinRiskPts(25);
+  CB_MaxRiskPts(120);
+  CB_RewardRisk(1.5);
+
+  { === VWAP fade === }
+  VF_MinDistPts(25);
+  VF_ADXMax(22);
+  VF_BufferPts(6);
+  VF_MinRiskPts(15);
+  VF_MaxRiskPts(80);
+
+Var
+  dayDate                                                 : Integer;
+  dayStopped, r2Day, boxReady                             : Boolean;
+  obAborted, obAbortLogged, amReady                       : Boolean;
+  tradesToday, tradesOB, tradesPB, tradesCB, tradesVF     : Integer;
+  lockedMod, activeMod, statusCode                        : Integer;
+  { statusCode: 0 idle, 1 OB wait/entry, 2 PB, 3 CB, 4 VF, 5 STOP, 6 FLAT, 7 R2, 8 MAX }
+  boxH, boxL, boxPts, amH, amL                            : Float;
+  emaF, emaS, adxV, vwapV, tick                           : Float;
+  entrySL, entryTP                                        : Float;
+  pbDirI                                                  : Integer;
+  dayPnL, stopLim                                         : Float;
+  trendUp, trendDn, sepOk                                 : Boolean;
+  distPts, riskPts, risk                                  : Float;
+  buf, sl, entry                                          : Float;
+
+Begin
+  tick := MinPriceIncrement;
+  if tick <= 0 then
+    tick := 0.5;
+
+  {---------- Novo dia ----------}
+  if Date <> dayDate then
+  begin
+    dayDate := Date;
+    dayStopped := false;
+    r2Day := false;
+    boxReady := false;
+    obAborted := false;
+    obAbortLogged := false;
+    amReady := false;
+    tradesToday := 0;
+    tradesOB := 0;
+    tradesPB := 0;
+    tradesCB := 0;
+    tradesVF := 0;
+    lockedMod := 0;
+    activeMod := 0;
+    statusCode := 0;
+    boxH := 0;
+    boxL := 0;
+    boxPts := 0;
+    amH := 0;
+    amL := 0;
+    entrySL := 0;
+    entryTP := 0;
+    pbDirI := 0;
+  end;
+
+  {---------- Indicadores ----------}
+  emaF := MediaExp(EMAFast, Close);
+  emaS := MediaExp(EMASlow, Close);
+  adxV := ADX(ADXPeriod, 14);
+  vwapV := VWAP;
+
+  {---------- PnL / STOP DIA ----------}
+  dayPnL := DailyResult(true);
+  if SeedCapital > 0 then
+    stopLim := SeedCapital * StopDiaPct / 100.0
+  else
+    stopLim := StopDiaReais;
+
+  if (not dayStopped) and (dayPnL <= -Abs(stopLim)) then
+  begin
+    dayStopped := true;
+    if HasPosition then
+      ClosePosition;
+    lockedMod := 0;
+    activeMod := 0;
+    statusCode := 5;
+  end;
+
+  {---------- Flat fim do dia ----------}
+  if Time >= FlatHora then
+  begin
+    if HasPosition then
+      ClosePosition;
+    lockedMod := 0;
+    activeMod := 0;
+    statusCode := 6;
+  end;
+
+  {---------- Caixa 09:00–09:15 ----------}
+  if (not boxReady) and (Time >= BoxStart) and (Time < BoxEnd) then
+  begin
+    if boxH = 0 then
+    begin
+      boxH := High;
+      boxL := Low;
+    end
+    else
+    begin
+      if High > boxH then boxH := High;
+      if Low < boxL then boxL := Low;
+    end;
+  end;
+
+  if (not boxReady) and (Time >= BoxEnd) and (boxH > 0) then
+  begin
+    boxReady := true;
+    boxPts := (boxH - boxL) / tick;
+    if (boxPts < BoxMinPts) or (boxPts > BoxMaxPts) then
+    begin
+      r2Day := true;
+      obAborted := true;
+      obAbortLogged := true;
+      statusCode := 7;
+    end;
+  end;
+
+  {---------- Range manhã ContBreak ----------}
+  if (Time >= BoxStart) and (Time < CB_RangeEnd) then
+  begin
+    if amH = 0 then
+    begin
+      amH := High;
+      amL := Low;
+    end
+    else
+    begin
+      if High > amH then amH := High;
+      if Low < amL then amL := Low;
+    end;
+  end;
+  if (not amReady) and (Time >= CB_RangeEnd) and (amH > 0) then
+    amReady := true;
+
+  {---------- Aborto cedo OB ----------}
+  if not obAborted then
+  begin
+    if not EnableOpenBreak then
+      obAborted := true
+    else if r2Day then
+      obAborted := true
+    else if tradesOB > 0 then
+      obAborted := true
+    else if boxReady and (Time >= OB_EntryEnd) then
+    begin
+      obAborted := true;
+      obAbortLogged := true;
+    end;
+  end;
+
+  {========== LOCK: gestão ==========}
+  if HasPosition then
+  begin
+    if lockedMod = 0 then
+      lockedMod := activeMod;
+    activeMod := lockedMod;
+
+    if IsBought then
+    begin
+      if entrySL > 0 then
+        SellToCoverStop(entrySL, entrySL);
+      if entryTP > 0 then
+        SellToCoverLimit(entryTP);
+    end
+    else if IsSold then
+    begin
+      if entrySL > 0 then
+        BuyToCoverStop(entrySL, entrySL);
+      if entryTP > 0 then
+        BuyToCoverLimit(entryTP);
+    end;
+  end
+  else
+  begin
+    if lockedMod <> 0 then
+      lockedMod := 0;
+
+    if dayStopped or (Time >= FlatHora) or (not boxReady) then
+      activeMod := 0
+    else if tradesToday >= MaxTradesDay then
+    begin
+      activeMod := 0;
+      statusCode := 8;
+    end
+    else
+    begin
+      {----- A: OpenBreak -----}
+      if EnableOpenBreak and (not obAborted) and (not r2Day) and (tradesOB = 0)
+         and (Time >= BoxEnd) and (Time < OB_EntryEnd) then
+      begin
+        activeMod := 1;
+        statusCode := 1;
+        buf := OB_BreakBufferPts * tick;
+        if (Close > boxH + buf) then
+        begin
+          entry := Close;
+          entrySL := entry - OB_StopPts * tick;
+          entryTP := entry + OB_GainPts * tick;
+          BuyAtMarket;
+          tradesOB := tradesOB + 1;
+          tradesToday := tradesToday + 1;
+          lockedMod := 1;
+        end
+        else if (Close < boxL - buf) then
+        begin
+          entry := Close;
+          entrySL := entry + OB_StopPts * tick;
+          entryTP := entry - OB_GainPts * tick;
+          SellShortAtMarket;
+          tradesOB := tradesOB + 1;
+          tradesToday := tradesToday + 1;
+          lockedMod := 1;
+        end;
+      end
+      {----- B–E com OB liberado -----}
+      else if (obAborted or (not EnableOpenBreak) or r2Day or (tradesOB > 0))
+              and (Time < FlatHora) then
+      begin
+        trendUp := (emaF > emaS) and (Close > emaF);
+        trendDn := (emaF < emaS) and (Close < emaF);
+        sepOk := (Abs(emaF - emaS) / tick >= EMA_SepMinPts);
+
+        {----- B: Pullback -----}
+        pbDirI := 0;
+        if EnablePullback and (tradesPB = 0) and (adxV >= ADXTrendMin) and sepOk then
+        begin
+          if trendUp and (Low[1] <= emaF[1]) and (Close[1] > emaF[1]) and (Close[1] > Open[1]) then
+            pbDirI := 1;
+          if trendDn and (High[1] >= emaF[1]) and (Close[1] < emaF[1]) and (Close[1] < Open[1]) then
+            pbDirI := -1;
+        end;
+
+        if pbDirI <> 0 then
+        begin
+          activeMod := 2;
+          statusCode := 2;
+          buf := PB_EntryOffsetPts * tick;
+          if (pbDirI = 1) and (Close >= High[1] + buf) then
+          begin
+            entry := Close;
+            sl := Low[1] - PB_BufferPts * tick;
+            risk := Abs(entry - sl);
+            riskPts := risk / tick;
+            if (riskPts >= PB_MinRiskPts) and (riskPts <= PB_MaxRiskPts) then
+            begin
+              entrySL := sl;
+              entryTP := entry + PB_RewardRisk * risk;
+              BuyAtMarket;
+              tradesPB := tradesPB + 1;
+              tradesToday := tradesToday + 1;
+              lockedMod := 2;
+            end;
+          end
+          else if (pbDirI = -1) and (Close <= Low[1] - buf) then
+          begin
+            entry := Close;
+            sl := High[1] + PB_BufferPts * tick;
+            risk := Abs(entry - sl);
+            riskPts := risk / tick;
+            if (riskPts >= PB_MinRiskPts) and (riskPts <= PB_MaxRiskPts) then
+            begin
+              entrySL := sl;
+              entryTP := entry - PB_RewardRisk * risk;
+              SellShortAtMarket;
+              tradesPB := tradesPB + 1;
+              tradesToday := tradesToday + 1;
+              lockedMod := 2;
+            end;
+          end;
+        end
+        {----- D: ContBreak -----}
+        else if EnableContBreak and (tradesCB = 0) and amReady
+                and (adxV >= CB_ADXMin) and sepOk and (trendUp or trendDn) then
+        begin
+          activeMod := 3;
+          statusCode := 3;
+          buf := CB_BreakBufferPts * tick;
+          if trendUp and (Close > amH + buf) then
+          begin
+            entry := Close;
+            sl := amL - CB_BreakBufferPts * tick;
+            risk := Abs(entry - sl);
+            riskPts := risk / tick;
+            if (riskPts >= CB_MinRiskPts) and (riskPts <= CB_MaxRiskPts) then
+            begin
+              entrySL := sl;
+              entryTP := entry + CB_RewardRisk * risk;
+              BuyAtMarket;
+              tradesCB := tradesCB + 1;
+              tradesToday := tradesToday + 1;
+              lockedMod := 3;
+            end;
+          end
+          else if trendDn and (Close < amL - buf) then
+          begin
+            entry := Close;
+            sl := amH + CB_BreakBufferPts * tick;
+            risk := Abs(entry - sl);
+            riskPts := risk / tick;
+            if (riskPts >= CB_MinRiskPts) and (riskPts <= CB_MaxRiskPts) then
+            begin
+              entrySL := sl;
+              entryTP := entry - CB_RewardRisk * risk;
+              SellShortAtMarket;
+              tradesCB := tradesCB + 1;
+              tradesToday := tradesToday + 1;
+              lockedMod := 3;
+            end;
+          end;
+        end
+        {----- E: VWAP fade -----}
+        else if EnableVwapFade and (tradesVF = 0) and (not r2Day)
+                and (adxV <= VF_ADXMax) then
+        begin
+          distPts := Abs(Close - vwapV) / tick;
+          if distPts >= VF_MinDistPts then
+          begin
+            activeMod := 4;
+            statusCode := 4;
+            buf := VF_BufferPts * tick;
+            if Close > vwapV then
+            begin
+              entry := Close;
+              sl := High[1] + buf;
+              risk := Abs(entry - sl);
+              riskPts := risk / tick;
+              if (riskPts >= VF_MinRiskPts) and (riskPts <= VF_MaxRiskPts)
+                 and (vwapV < entry) then
+              begin
+                entrySL := sl;
+                entryTP := vwapV;
+                SellShortAtMarket;
+                tradesVF := tradesVF + 1;
+                tradesToday := tradesToday + 1;
+                lockedMod := 4;
+              end;
+            end
+            else
+            begin
+              entry := Close;
+              sl := Low[1] - buf;
+              risk := Abs(entry - sl);
+              riskPts := risk / tick;
+              if (riskPts >= VF_MinRiskPts) and (riskPts <= VF_MaxRiskPts)
+                 and (vwapV > entry) then
+              begin
+                entrySL := sl;
+                entryTP := vwapV;
+                BuyAtMarket;
+                tradesVF := tradesVF + 1;
+                tradesToday := tradesToday + 1;
+                lockedMod := 4;
+              end;
+            end;
+          end
+          else
+          begin
+            activeMod := 0;
+            statusCode := 0;
+          end;
+        end
+        else
+        begin
+          activeMod := 0;
+          if r2Day then
+            statusCode := 7
+          else
+            statusCode := 0;
+        end;
+      end
+      else
+      begin
+        activeMod := 0;
+        statusCode := 1;
+      end;
+    end;
+  end;
+
+  { Telinha — concatenação numérica nativa do Profit }
+  PlotText("RR WDO v1 | mod=" + activeMod + " lock=" + lockedMod
+           + " st=" + statusCode + " | ver RegimeRouterWDO_LOG.md", clWhite, 0, 9);
+  PlotText("dPnL=" + dayPnL + " STOP=-" + stopLim
+           + " t=" + tradesToday + "/" + MaxTradesDay
+           + " OB" + tradesOB + " PB" + tradesPB
+           + " CB" + tradesCB + " VF" + tradesVF
+           + " ADX=" + adxV + " cx=" + boxPts, clAqua, 1, 8);
+
+  Plot(emaF);
+  Plot2(emaS);
+  Plot3(vwapV);
+
+End.

@@ -4,12 +4,13 @@ Repositório: [vigmiranda/mt5-eas](https://github.com/vigmiranda/mt5-eas)
 
 **Regras do projeto (valem em qualquer plataforma):** [`REGRAS.md`](REGRAS.md) · agentes: [`AGENTS.md`](AGENTS.md)
 
-Automação em **MetaTrader 5** para duas corretoras:
+Automação multiplataforma:
 
-| Pasta | Corretora | Mercado |
-|-------|-----------|---------|
-| `eas/nomo/` | Nomo | Forex / CFDs |
-| `eas/clear/` | Clear | Minicontratos B3 (WIN) |
+| Pasta | Corretora / plataforma | Mercado |
+|-------|--------------------------|---------|
+| `eas/nomo/` | Nomo · **MT5** | Forex / CFDs |
+| `eas/clear/` | Clear · **MT5** | Minicontratos B3 (WIN) |
+| `eas/genial/` | Genial · **Profit Pro (NTSL)** | Minicontrato dólar (WDO) |
 
 ---
 
@@ -77,6 +78,22 @@ Demais EAs Nomo (ScalpXAU, Pattern, Trend*, Grid BTC, etc.) estão em [`eas/nomo
 - Magic **320932**
 
 **Instalação:** remova ScalpXAU/Pattern/etc. → `eas/nomo/RegimeRouterXAU_v1.mq5` → F7 → gráfico **XAUUSD M15**. Log: `RegimeRouterXAU v1.00`.
+
+---
+
+## Genial (Profit Pro · NTSL)
+
+| Ativo | Timeframe | Estratégia | Versão | Papel |
+|-------|-----------|------------|--------|-------|
+| WDO$ | M5 | **RegimeRouterWDO_v1** | 1.00 | Único robô ativo na sim Genial |
+
+**RegimeRouterWDO_v1** — mesma mecânica do WIN, setups do dólar
+- Cascata: **OB → PB → ContBreak → VwapFade** (flags ON)
+- **Sem preço médio** no v1 (notícia/gap USD)
+- STOP DIA via `SeedCapital×5%` ou `StopDiaReais` · flat 17:50 · 1 contrato na sim
+- Pasta: [`eas/genial/`](eas/genial/) · guia do mês de teste: [`eas/genial/README.md`](eas/genial/README.md) · legenda: [`eas/genial/RegimeRouterWDO_LOG.md`](eas/genial/RegimeRouterWDO_LOG.md)
+
+**Instalação rápida:** Profit Pro → Editor de Estratégias → colar `.ntsl` → Automação na **conta simulação** → WDO M5 · qtd 1. Detalhes no README da pasta.
 
 ---
 

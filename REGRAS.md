@@ -1,6 +1,6 @@
 # Regras do projeto (multiplataforma)
 
-Estas regras valem para **qualquer corretora/plataforma** (Clear, Nomo ou futuras) e para qualquer EA deste repositório.  
+Estas regras valem para **qualquer corretora/plataforma** (Clear, Nomo, Genial/Profit ou futuras) e para qualquer EA/estratégia deste repositório.  
 Mudanças de código, parâmetros e análises devem respeitá-las.
 
 ---
@@ -21,7 +21,7 @@ Toda análise do que vamos implementar, ajustar ou descartar deve ser feita no *
 
 ## 3. RegimeRouter — cascata assertiva (sem meta de lucro)
 
-Para os EAs **RegimeRouter*** (WIN / XAU e futuros roteadores):
+Para os EAs/estratégias **RegimeRouter*** (WIN / XAU / WDO e futuros roteadores):
 
 - **Sem meta diária de lucro** (não há trava em +3%) e **sem preferência forçada de 1 trade**.
 - Objetivo: a cada barra (ex. M5) tentar padrões em **cascata** (A → B → C → …) com indicadores **fortes** por estratégia, maximizando oportunidades **dentro** do mapa ligado.
@@ -56,8 +56,8 @@ Para EAs legados/arquivo (fora do roteador), a política antiga de meta ~3% / po
 
 ## 8. Corretora nova herda estas regras
 
-- Clear, Nomo ou qualquer plataforma futura **herdam** este documento por padrão.
-- Só documentar o que for específico da corretora (pasta, magic, fees, fuso, símbolo, capital virtual).
+- Clear, Nomo, Genial (Profit Pro) ou qualquer plataforma futura **herdam** este documento por padrão.
+- Só documentar o que for específico da corretora (pasta, magic/NTSL, fees, fuso, símbolo, capital virtual, sim vs real).
 
 ## 9. Magic e comment únicos por EA
 
