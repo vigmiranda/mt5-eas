@@ -1,9 +1,9 @@
-{ RegimeRouterWDO_viz v1.01 — SO coloracao / plots / texto (SEM ordens)
-  Genial Profit Pro · WDO M5
-  Aplicar: botao direito no grafico → Inserir Regra de Coloracao
+{ RegimeRouterWDO_viz v1.02 - SO coloracao / plots / texto (SEM ordens)
+  Genial Profit Pro - WDO M5
+  Aplicar: botao direito no grafico -> Inserir Regra de Coloracao
   Automacao de ordens continua com RegimeRouterWDO_v1
   Legenda: RegimeRouterWDO_LOG.md
-  PlotText no candle = zona (OB/AB/VF/R2/POS...). Plot4=visMod Plot5=distVWAP }
+  ASCII only. PlotText com aspas duplas. }
 input
   BoxStart(900);
   BoxEnd(915);
@@ -78,7 +78,7 @@ begin
       r2Day := 1;
   end;
 
-  { prioridade visual (aproxima a cascata — nao e lock da automacao) }
+  { prioridade visual (aproxima a cascata - nao e lock da automacao) }
   visMod := 0;
   if (dayPnL <= (0 - Abs(StopDiaReais))) then
     visMod := 11
@@ -105,75 +105,62 @@ begin
     visMod := 13;
 
   if (visMod = 11) then
-  begin
-    PaintBar(clRed);
-    PlotText('STOP', clRed, 1, 8);
-  end
+    PaintBar(clRed)
   else if (visMod = 12) then
-  begin
-    PaintBar(clGray);
-    PlotText('FLAT', clGray, 1, 8);
-  end
+    PaintBar(clGray)
   else if (visMod = 99) then
-  begin
-    PaintBar(clLime);
-    PlotText('POS', clLime, 1, 9);
-  end
+    PaintBar(clLime)
   else if (visMod = 1) then
-  begin
-    PaintBar(clAqua);
-    PlotText('OB', clAqua, 1, 8);
-  end
+    PaintBar(clAqua)
   else if (visMod = 2) then
-  begin
-    PaintBar(clBlue);
-    PlotText('AB', clBlue, 1, 8);
-  end
+    PaintBar(clBlue)
   else if (visMod = 3) then
-  begin
-    PaintBar(clFuchsia);
-    PlotText('OF', clFuchsia, 1, 8);
-  end
+    PaintBar(clFuchsia)
   else if (visMod = 4) then
-  begin
-    PaintBar(clGreen);
-    PlotText('PB', clGreen, 1, 8);
-  end
+    PaintBar(clGreen)
   else if (visMod = 5) then
-  begin
-    PaintBar(clYellow);
-    PlotText('NY', clYellow, 1, 8);
-  end
+    PaintBar(clYellow)
   else if (visMod = 9) then
-  begin
-    PaintBar(clPurple);
-    PlotText('LF', clPurple, 1, 8);
-  end
+    PaintBar(clPurple)
   else if (visMod = 10) then
-  begin
-    PaintBar(clWhite);
-    PlotText('VF', clWhite, 1, 8);
-  end
+    PaintBar(clWhite)
   else if (visMod = 13) then
-  begin
-    PaintBar(clOlive);
-    PlotText('R2', clOlive, 1, 8);
-  end
+    PaintBar(clOlive)
   else
-  begin
     PaintBar(clSilver);
-    PlotText('IDLE', clSilver, 0, 7);
-  end;
+
+  if (visMod = 11) then
+    PlotText("STOP", clRed, 1, 8)
+  else if (visMod = 12) then
+    PlotText("FLAT", clGray, 1, 8)
+  else if (visMod = 99) then
+    PlotText("POS", clLime, 1, 9)
+  else if (visMod = 1) then
+    PlotText("OB", clAqua, 1, 8)
+  else if (visMod = 2) then
+    PlotText("AB", clBlue, 1, 8)
+  else if (visMod = 3) then
+    PlotText("OF", clFuchsia, 1, 8)
+  else if (visMod = 4) then
+    PlotText("PB", clGreen, 1, 8)
+  else if (visMod = 5) then
+    PlotText("NY", clYellow, 1, 8)
+  else if (visMod = 9) then
+    PlotText("LF", clPurple, 1, 8)
+  else if (visMod = 10) then
+    PlotText("VF", clWhite, 1, 8)
+  else if (visMod = 13) then
+    PlotText("R2", clOlive, 1, 8)
+  else
+    PlotText("IDLE", clSilver, 0, 7);
 
   Plot(emaF);
   Plot2(emaS);
   Plot3(vwapV);
   Plot4(visMod);
-  PlotN(5, distPts);
   SetPlotColor(1, clYellow);
   SetPlotColor(2, clBlue);
   SetPlotColor(3, clWhite);
   SetPlotColor(4, clLime);
-  SetPlotColor(5, clSkyBlue);
 
 end;
