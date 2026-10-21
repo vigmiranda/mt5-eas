@@ -123,7 +123,8 @@ eas/
     RegimeRouterXAU_v1.mq5   # Nomo / MT5 / XAU (ativo)
     archive/
   genial/
-    RegimeRouterWDO_v1.ntsl  # Genial / Profit Pro / WDO (sim)
+    RegimeRouterWDO_v1.ntsl   # execução (Automação)
+    RegimeRouterWDO_viz.ntsl  # Regra de Coloração (sem ordens)
     README.md
     RegimeRouterWDO_LOG.md
 ```
