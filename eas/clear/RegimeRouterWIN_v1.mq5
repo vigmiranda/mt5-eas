@@ -10,9 +10,10 @@
 //| v1.06: ContBreak (D) + VWAP fade (E) — flags on (desligue se ruim)|
 //| v1.07: VF liberado em R2 (mesmos critérios); aviso se chart ≠ InpTF|
 //| v1.08: fix risco/dist pts (cotação/SL=0) + VF dist no close da barra|
+//| v1.09: QuotesOk com fallback Tick/LAST (Clear WIN$N bid/ask=0)|
 //+------------------------------------------------------------------+
 #property copyright "Vitor / mt5-eas"
-#property version   "1.08"
+#property version   "1.09"
 #property strict
 
 #include <Trade/Trade.mqh>
@@ -693,11 +694,52 @@ double PriceDiffToPts(const double a, const double b)
 }
 
 //+------------------------------------------------------------------+
+// Clear WIN$N: SYMBOL_BID/ASK às vezes vem 0 no OnTick → fallback tick/last/close
 bool QuotesOk(double &bid, double &ask)
 {
    bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-   return (bid > 0.0 && ask > 0.0 && ask >= bid);
+   if(bid > 0.0 && ask > 0.0 && ask >= bid)
+      return true;
+
+   MqlTick tick;
+   if(SymbolInfoTick(_Symbol, tick))
+   {
+      if(tick.bid > 0.0 && tick.ask > 0.0 && tick.ask >= tick.bid)
+      {
+         bid = tick.bid;
+         ask = tick.ask;
+         return true;
+      }
+      if(tick.last > 0.0)
+      {
+         bid = tick.last;
+         ask = tick.last;
+         return true;
+      }
+   }
+
+   double last = SymbolInfoDouble(_Symbol, SYMBOL_LAST);
+   if(last > 0.0)
+   {
+      bid = last;
+      ask = last;
+      return true;
+   }
+
+   double close1 = iClose(_Symbol, InpTF, 0);
+   if(close1 <= 0.0)
+      close1 = iClose(_Symbol, InpTF, 1);
+   if(close1 > 0.0)
+   {
+      bid = close1;
+      ask = close1;
+      return true;
+   }
+
+   bid = 0.0;
+   ask = 0.0;
+   return false;
 }
 
 //+------------------------------------------------------------------+
@@ -1074,7 +1116,12 @@ bool PatternTrendStrong(string &why)
    if(!RefreshIndicators()) { why = "indicadores indisponíveis"; return false; }
    double emaSep = MathAbs(g_emaFast - g_emaSlow);
    double emaSepPts = (_Point > 0.0 ? emaSep / _Point : emaSep);
-   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double bid = 0.0, ask = 0.0;
+   if(!QuotesOk(bid, ask))
+   {
+      why = "sem cotacao";
+      return false;
+   }
    bool trendUp = (g_emaFast > g_emaSlow && bid > g_emaFast);
    bool trendDn = (g_emaFast < g_emaSlow && bid < g_emaFast);
    bool strongADX = (g_adx >= InpADX_TrendMin);
@@ -1151,7 +1198,12 @@ bool PatternContBreakEligible(string &why)
       why = StringFormat("CB EMA sep %.0f fraca", emaSepPts);
       return false;
    }
-   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double bid = 0.0, ask = 0.0;
+   if(!QuotesOk(bid, ask))
+   {
+      why = "CB sem cotacao";
+      return false;
+   }
    bool trendUp = (g_emaFast > g_emaSlow && bid > g_emaFast);
    bool trendDn = (g_emaFast < g_emaSlow && bid < g_emaFast);
    if(!trendUp && !trendDn)
@@ -1442,9 +1494,12 @@ bool OpenMarket(const int dir, const double sl, const double tp, const string ta
       LogSkip(StringFormat("spread %d > %d", spread, InpMaxSpreadPoints));
       return false;
    }
-   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   if(ask <= 0.0 || bid <= 0.0) return false;
+   double bid = 0.0, ask = 0.0;
+   if(!QuotesOk(bid, ask))
+   {
+      LogSkip("OpenMarket sem cotacao");
+      return false;
+   }
 
    double sln = sl, tpn = tp;
    NormalizeSLTP(dir > 0, (dir > 0 ? ask : bid), sln, tpn);
@@ -1508,8 +1563,12 @@ void ModuleOpenBreak()
       return;
    }
 
-   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double bid = 0.0, ask = 0.0;
+   if(!QuotesOk(bid, ask))
+   {
+      LogSkip("OpenBreak sem cotacao");
+      return;
+   }
    double entry = (dir > 0 ? ask : bid);
    double sl = (dir > 0) ? (g_boxLow - InpOB_BreakBufferPts) : (g_boxHigh + InpOB_BreakBufferPts);
    if(_Point > 0.0 && MathAbs(_Point - 1.0) > 1e-8)
@@ -1550,8 +1609,8 @@ void ManageOpenBreakPosition()
       long type = PositionGetInteger(POSITION_TYPE);
       double open = PositionGetDouble(POSITION_PRICE_OPEN);
       double sl = PositionGetDouble(POSITION_SL);
-      double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-      double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+      double bid = 0.0, ask = 0.0;
+      if(!QuotesOk(bid, ask)) continue;
       double newSL = sl;
 
       if(type == POSITION_TYPE_BUY)
@@ -1868,9 +1927,12 @@ bool OpenPM_Leg(const int dir, const double lots, const string tag)
       LogSkip(StringFormat("PM spread %d > %d", spread, InpMaxSpreadPoints));
       return false;
    }
-   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   if(ask <= 0.0 || bid <= 0.0) return false;
+   double bid = 0.0, ask = 0.0;
+   if(!QuotesOk(bid, ask))
+   {
+      LogSkip("PM sem cotacao");
+      return false;
+   }
 
    trade.SetExpertMagicNumber(InpMagic);
    trade.SetDeviationInPoints(InpSlippagePoints);
@@ -1937,8 +1999,8 @@ void ManagePrecoMedio()
       return;
    }
 
-   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double bid = 0.0, ask = 0.0;
+   if(!QuotesOk(bid, ask)) return;
    double pt = (_Point > 0.0 ? _Point : 1.0);
    double minGain = InpPM_MinGainPts * pt;
 
@@ -2063,7 +2125,7 @@ void UpdateChartComment()
       : (g_obAborted ? "OBabort" : "free");
 
    string txt = StringFormat(
-      "RR v1.08 %s | %s %s | %s\n"
+      "RR v1.09 %s | %s %s | %s\n"
       "%s\n"
       "OB%d PB%d CB%d VF%d PM%d | %s | cx=%.0f(%s)\n"
       "ADX%.0f EMA%.0f/%.0f ATR%.0f VWAP%.0f spr%d\n"
@@ -2121,9 +2183,9 @@ int OnInit()
    ResetDayIfNeeded();
    RefreshIndicators();
 
-   Print("========== RegimeRouterWIN v1.08 ==========");
+   Print("========== RegimeRouterWIN v1.09 ==========");
    Print("RR init | cascata OB>PB>CB>VF>PM | lock flat | sem meta | log curto");
-   Print("RR init | v1.08 fix risco/dist pts (guarda cotacao/SL) | VF dist no close");
+   Print("RR init | v1.09 QuotesOk fallback Tick/LAST | VF dist no close");
    PrintFormat("RR init | flags OB=%d PB=%d CB=%d VF=%d PM=%d | maxT=%d | STOP=%.0f%% (~R$%.0f)",
                (InpEnableOpenBreak ? 1 : 0), (InpEnablePullback ? 1 : 0),
                (InpEnableContBreak ? 1 : 0), (InpEnableVwapFade ? 1 : 0), (InpEnablePrecoMedio ? 1 : 0),

@@ -99,6 +99,8 @@ Preço longe da VWAP de sessão (≥ `InpVF_MinDistPts`) e ADX ≤ `InpVF_ADXMax
 
 **v1.08 (bugfix):** risco/distância em pontos rejeitam cotação ou SL inválidos (`entry<=0`, `sl<=0`, risco &gt; 5000 pts). VF mede dist no **close** da barra (não bid live). PB não consome sinal se o risco for absurdo.
 
+**v1.09:** `QuotesOk` com fallback `SymbolInfoTick` / `LAST` / close — no Clear `WIN$N` o BID/ASK às vezes vem 0 e bloqueava CB/VF o dia todo (`sem cotacao bid/ask`).
+
 **Ops (sem afrouxar regra):** arraste o EA no gráfico **WIN M5**. Se o chart ≠ `InpTF`, o init loga `RR ! | AVISO chart≠InpTF`.
 
 ---
@@ -106,7 +108,7 @@ Preço longe da VWAP de sessão (≥ `InpVF_MinDistPts`) e ADX ≤ `InpVF_ADXMax
 ## Telinha do gráfico (`Comment`)
 
 ```
-RR v1.08 WIN$N | R5 CB | CB rng 128400-128820
+RR v1.09 WIN$N | R5 CB | CB rng 128400-128820
 ...
 OB1 PB1 CB0 VF0 PM1 | free | cx=420(OK)
 ```
