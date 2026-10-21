@@ -1,7 +1,9 @@
-# RegimeRouterWDO — legenda (Profit Pro / Genial) v1.04
+# RegimeRouterWDO — legenda (Profit Pro / Genial) v1.05
 
 Plataforma: **Profit Pro** · Corretora: **Genial (sim)** · Ativo: **WDO** · TF: **M5**  
-Arquivo: [`RegimeRouterWDO_v1.ntsl`](RegimeRouterWDO_v1.ntsl)
+Arquivos:
+- [`RegimeRouterWDO_v1.ntsl`](RegimeRouterWDO_v1.ntsl) — **execução** (Automação)
+- [`RegimeRouterWDO_viz.ntsl`](RegimeRouterWDO_viz.ntsl) — **só visual** (Regra de Coloração)
 
 ---
 
@@ -17,50 +19,75 @@ OB → AB → OF → PB → NY → CB → IB → RD → LF → VF
 | 2 | `EnableAsiaBreak` | **AB** Asia/Overnight break | Rompe H/L do **dia anterior** |
 | 3 | `EnableOvernightFibo` | **OF** Overnight Fibo | Fade na zona 50–61,8% do range anterior → meio |
 | 4 | `EnablePullback` | **PB** Pullback | Tendência + pullback EMA |
-| 5 | `EnableNYOpen` | **NY** NY Open | Micro-caixa 10:30–10:45: break (ADX alto) ou fade (ADX baixo) |
-| 6 | `EnableContBreak` | **CB** ContBreak | Rompe range manhã (até 11:00) com tendência |
+| 5 | `EnableNYOpen` | **NY** NY Open | Micro-caixa 10:30–10:45: break ou fade |
+| 6 | `EnableContBreak` | **CB** ContBreak | Rompe range manhã (até 11:00) |
 | 7 | `EnableInsideBreak` | **IB** Inside/Compression | ATR comprimido → rompe lookback |
-| 8 | `EnableRetestDay` | **RD** Retest day | Reteste abertura / PDL / PDH com rejeição |
-| 9 | `EnableLunchFade` | **LF** Lunch fade | 12:00–14:00 fade curto à VWAP (**bloqueado em R2**) |
-| 10 | `EnableVwapFade` | **VF** VWAP fade | Extensão vs VWAP (**também em R2**, v1.04) |
+| 8 | `EnableRetestDay` | **RD** Retest day | Reteste abertura / PDL / PDH |
+| 9 | `EnableLunchFade` | **LF** Lunch fade | 12:00–14:00 → VWAP (**off em R2**) |
+| 10 | `EnableVwapFade` | **VF** VWAP fade | Extensão vs VWAP (**também em R2**) |
 
-**Sem preço médio / grid** no WDO.
-
-**R2** = caixa fora de `[BoxMinPts–BoxMaxPts]` → OB off; LF off; **VF on** (mesmos `VF_MinDistPts` / `VF_ADXMax`).  
-AB / OF / PB / NY / CB / IB / RD seguem se fit (não dependem de R2).
-
-Lock: `lock=mod` até flat. OB aborta cedo → libera AB…VF.
+**Sem preço médio / grid.**  
+**R2:** OB/LF off · VF on · demais se fit.
 
 ---
 
-## statusCode (`st`)
+## Visual no gráfico (v1.05)
+
+Profit **não tem** Experts. Use:
+
+1. **Automação** = `RegimeRouterWDO` (ordens) — não inserir este como coloração.  
+2. No gráfico WDO M5: botão direito → **Inserir Regra de Coloração** → `RegimeRouterWDO_viz`.
+
+### Cores dos candles (`RegimeRouterWDO_viz`)
+
+| Cor | visMod | Significado |
+|-----|--------|-------------|
+| Prata | 0 | Idle / sem zona clara |
+| Aqua | 1 | Janela OB (caixa ok) |
+| Azul | 2 | Janela AB / manhã cedo |
+| Fúcsia | 3 | Zona OF (ADX baixo manhã) |
+| Verde | 4 | Tendência (PB/CB-like) |
+| Amarelo | 5 | Janela NY |
+| Roxo | 9 | Zona LF (almoço + dist VWAP) |
+| Branco | 10 | Zona VF (extensão VWAP) |
+| Oliva | 13 | Dia **R2** sem zona VF |
+| Lima | 99 | Conta **com posição** |
+| Vermelho | 11 | STOP DIA (≈ `StopDiaReais`) |
+| Cinza | 12 | Após flat / fim sessão |
+
+> A viz **aproxima** a cascata por horário/indicadores — não é o `lock` interno da Automação. Confirme entradas na janela **Automações** / **Ordens**.
+
+### Linhas (exec + viz)
+
+| Plot | Linha | Cor |
+|------|-------|-----|
+| 1 | EMA rápida | Amarelo |
+| 2 | EMA lenta | Azul |
+| 3 | VWAP | Branco |
+| 4 | `visMod` (número) | Lima |
+
+---
+
+## statusCode (`st`) — execução
 
 | st | Significado |
 |----|-------------|
 | 0 | IDLE |
-| 1–10 | Módulo correspondente (tabela acima) |
-| 13 | R2 — cascata sem fit (PM-style hole; VF/PB/… não bateram) |
+| 1–10 | Módulo |
+| 11 | STOP DIA |
+| 12 | Flat fim do dia |
+| 13 | R2 sem fit |
 | 14 | Teto `MaxTradesDay` |
-
-Em lock, `mod`/`lock` mostram o dono.
 
 ---
 
 ## STOP DIA
 
 - `SeedCapital > 0` → `SeedCapital × StopDiaPct%`  
-- Senão → `StopDiaReais` (**ajuste** ao saldo da sim Genial)
-
-Migração futura Clear → Genial: gravar o capital alocado em `SeedCapital`.
+- Senão → `StopDiaReais`
 
 ---
 
 ## Ticks
 
 `*Pts` = ticks × `MinPriceIncrement` (≈ **0,5** no WDO).
-
----
-
-## Ops
-
-Automação no gráfico/período **M5** (não M1). Não afrouxa MaxBox / ADX / candle — só remove o bloqueio de regime do VF em R2 (DNA do WIN v1.07).

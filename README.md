@@ -86,16 +86,17 @@ Demais EAs Nomo (ScalpXAU, Pattern, Trend*, Grid BTC, etc.) estão em [`eas/nomo
 
 | Ativo | Timeframe | Estratégia | Versão | Papel |
 |-------|-----------|------------|--------|-------|
-| WDO$ | M5 | **RegimeRouterWDO_v1** | 1.04 | Único robô ativo na sim Genial |
+| WDO$ | M5 | **RegimeRouterWDO_v1** | 1.05 | Único robô ativo na sim Genial |
 
 **RegimeRouterWDO_v1** — cascata larga p/ teste Genial (dólar) · DNA alinhado ao WIN
 - `OB → AB → OF → PB → NY → CB → IB → RD → LF → VF` (flags ON)
-- **R2** (caixa inválida): OB off · **LF** bloqueado · **VF liberado** (mesmos critérios; v1.04) · AB/OF/PB/NY/CB/IB/RD se fit
-- Automação no **WDO M5** · 1 contrato · sem preço médio
-- STOP via `SeedCapital` (5%) ou `StopDiaReais` — na migração Clear→Genial, gravar o capital alocado em `SeedCapital`
+- **R2:** OB/LF off · **VF on** · demais se fit
+- **Visual:** `RegimeRouterWDO_viz` = Regra de Coloração no gráfico (sem ordens); execução só na Automação
+- Automação **WDO M5** · 1 contrato · sem preço médio
+- STOP via `SeedCapital` (5%) ou `StopDiaReais`
 - Pasta: [`eas/genial/`](eas/genial/) · guia: [`eas/genial/README.md`](eas/genial/README.md) · legenda: [`eas/genial/RegimeRouterWDO_LOG.md`](eas/genial/RegimeRouterWDO_LOG.md)
 
-**Instalação rápida:** Profit Pro → Editor → colar `.ntsl` → Automação **sim** → WDO **M5** · qtd 1. Detalhes no README da pasta.
+**Instalação rápida:** Editor → colar execução + viz → Automação **sim** WDO **M5** · coloração = viz. Detalhes no README da pasta.
 
 ---
 
@@ -122,7 +123,8 @@ eas/
     RegimeRouterXAU_v1.mq5   # Nomo / MT5 / XAU (ativo)
     archive/
   genial/
-    RegimeRouterWDO_v1.ntsl  # Genial / Profit Pro / WDO (sim)
+    RegimeRouterWDO_v1.ntsl   # execução (Automação)
+    RegimeRouterWDO_viz.ntsl  # Regra de Coloração (sem ordens)
     README.md
     RegimeRouterWDO_LOG.md
 ```

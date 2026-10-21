@@ -1,0 +1,140 @@
+{ RegimeRouterWDO_viz v1.00 — SO coloracao / plots (SEM ordens)
+  Genial Profit Pro · WDO M5
+  Aplicar: botao direito no grafico → Inserir Regra de Coloracao
+  Automacao de ordens continua com RegimeRouterWDO_v1
+  Legenda: RegimeRouterWDO_LOG.md }
+input
+  BoxStart(900);
+  BoxEnd(915);
+  BoxMinPts(20);
+  BoxMaxPts(120);
+  EMAFast(20);
+  EMASlow(50);
+  ADXPeriod(14);
+  ADXTrendMin(20);
+  NY_Start(1030);
+  NY_BoxEnd(1045);
+  NY_EntryEnd(1130);
+  CB_RangeEnd(1100);
+  LF_Start(1200);
+  LF_End(1400);
+  LF_MinDistPts(18);
+  LF_ADXMax(20);
+  VF_MinDistPts(25);
+  VF_ADXMax(22);
+  FlatHora(1750);
+  StopDiaReais(250.0);
+
+var
+  dayDate, r2Day, boxReady, visMod : Integer;
+  boxH, boxL, boxPts : Float;
+  emaF, emaS, adxV, vwapV, tick, distPts, dayPnL : Float;
+
+begin
+  tick := MinPriceIncrement;
+  if (tick <= 0) then
+    tick := 0.5;
+
+  if (Date <> dayDate) then
+  begin
+    dayDate := Date;
+    r2Day := 0;
+    boxReady := 0;
+    boxH := 0;
+    boxL := 0;
+    boxPts := 0;
+    visMod := 0;
+  end;
+
+  emaF := MediaExp(EMAFast, Close);
+  emaS := MediaExp(EMASlow, Close);
+  adxV := ADX(ADXPeriod, 14);
+  vwapV := VWAP(1);
+  dayPnL := DailyResult(True);
+  distPts := Abs(Close - vwapV) / tick;
+
+  if (boxReady = 0) and (Time >= BoxStart) and (Time < BoxEnd) then
+  begin
+    if (boxH = 0) then
+    begin
+      boxH := High;
+      boxL := Low;
+    end
+    else
+    begin
+      if (High > boxH) then
+        boxH := High;
+      if (Low < boxL) then
+        boxL := Low;
+    end;
+  end;
+
+  if (boxReady = 0) and (Time >= BoxEnd) and (boxH > 0) then
+  begin
+    boxReady := 1;
+    boxPts := (boxH - boxL) / tick;
+    if (boxPts < BoxMinPts) or (boxPts > BoxMaxPts) then
+      r2Day := 1;
+  end;
+
+  { prioridade visual (aproxima a cascata — nao e lock da automacao) }
+  visMod := 0;
+  if (dayPnL <= (0 - Abs(StopDiaReais))) then
+    visMod := 11
+  else if (Time >= FlatHora) then
+    visMod := 12
+  else if HasPosition then
+    visMod := 99
+  else if (Time >= BoxEnd) and (Time < 1030) and (r2Day = 0) and (boxReady = 1) then
+    visMod := 1
+  else if (Time >= 915) and (Time < 1030) then
+    visMod := 2
+  else if (Time >= 915) and (Time < 1100) and (adxV < ADXTrendMin) then
+    visMod := 3
+  else if (Time >= NY_Start) and (Time < NY_EntryEnd) then
+    visMod := 5
+  else if (Time >= CB_RangeEnd) and (adxV >= ADXTrendMin) and (Abs(emaF - emaS) / tick >= 15) then
+    visMod := 4
+  else if (Time >= LF_Start) and (Time < LF_End) and (r2Day = 0)
+          and (adxV <= LF_ADXMax) and (distPts >= LF_MinDistPts) then
+    visMod := 9
+  else if (adxV <= VF_ADXMax) and (distPts >= VF_MinDistPts) then
+    visMod := 10
+  else if (r2Day = 1) then
+    visMod := 13;
+
+  if (visMod = 11) then
+    PaintBar(clRed)
+  else if (visMod = 12) then
+    PaintBar(clGray)
+  else if (visMod = 99) then
+    PaintBar(clLime)
+  else if (visMod = 1) then
+    PaintBar(clAqua)
+  else if (visMod = 2) then
+    PaintBar(clBlue)
+  else if (visMod = 3) then
+    PaintBar(clFuchsia)
+  else if (visMod = 4) then
+    PaintBar(clGreen)
+  else if (visMod = 5) then
+    PaintBar(clYellow)
+  else if (visMod = 9) then
+    PaintBar(clPurple)
+  else if (visMod = 10) then
+    PaintBar(clWhite)
+  else if (visMod = 13) then
+    PaintBar(clOlive)
+  else
+    PaintBar(clSilver);
+
+  Plot(emaF);
+  Plot2(emaS);
+  Plot3(vwapV);
+  Plot4(visMod);
+  SetPlotColor(1, clYellow);
+  SetPlotColor(2, clBlue);
+  SetPlotColor(3, clWhite);
+  SetPlotColor(4, clLime);
+
+end;
