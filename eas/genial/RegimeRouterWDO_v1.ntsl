@@ -1,7 +1,8 @@
-{ RegimeRouterWDO v1.04 — Genial/Profit Pro/WDO M5
+{ RegimeRouterWDO v1.05 — Genial/Profit Pro/WDO M5
   Cascata OB>AB>OF>PB>NY>CB>IB>RD>LF>VF | lock ate flat
-  v1.04: VF elegivel em R2 (mesmos criterios dist/ADX); OB off em R2
-  LF continua bloqueado em R2 (janela especifica). Automacao em M5. }
+  v1.04: VF elegivel em R2 (mesmos criterios); OB/LF off em R2
+  v1.05: Plot4(visMod) + cores das linhas — visual no chart
+  Cores dos candles: use RegimeRouterWDO_viz (nao inserir ESTE como coloracao) }
 input
   SeedCapital(0.0);
   StopDiaPct(5.0);
@@ -116,6 +117,7 @@ var
   entrySL, entryTP, fibLo, fibHi, mid : Float;
   dayPnL, stopLim, buf, sl, entry, risk, riskPts, distPts, rangePts : Float;
   hh, ll : Float;
+  visMod : Integer;
 
 begin
   tick := MinPriceIncrement;
@@ -793,8 +795,26 @@ begin
     end;
   end;
 
+  {--- visual: modulo ativo/lock (subplot Plot4) — ver RegimeRouterWDO_LOG.md ---}
+  visMod := lockedMod;
+  if (visMod = 0) then
+    visMod := activeMod;
+  if (statusCode = 11) then
+    visMod := 11
+  else if (statusCode = 12) then
+    visMod := 12
+  else if (statusCode = 13) and (visMod = 0) then
+    visMod := 13
+  else if (statusCode = 14) then
+    visMod := 14;
+
   Plot(emaF);
   Plot2(emaS);
   Plot3(vwapV);
+  Plot4(visMod);
+  SetPlotColor(1, clYellow);
+  SetPlotColor(2, clBlue);
+  SetPlotColor(3, clWhite);
+  SetPlotColor(4, clLime);
 
 end;

@@ -5,13 +5,14 @@ Conta **simulação** Genial · **Profit Pro** · **WDO** M5 · teste ~**1 mês*
 
 | Arquivo | Uso |
 |---------|-----|
-| [`RegimeRouterWDO_v1.ntsl`](RegimeRouterWDO_v1.ntsl) | Colar no Editor (**v1.04**) |
-| [`RegimeRouterWDO_LOG.md`](RegimeRouterWDO_LOG.md) | Legenda mod/st |
+| [`RegimeRouterWDO_v1.ntsl`](RegimeRouterWDO_v1.ntsl) | **Execução** — Automação (**v1.05**) |
+| [`RegimeRouterWDO_viz.ntsl`](RegimeRouterWDO_viz.ntsl) | **Só visual** — Regra de Coloração (sem ordens) |
+| [`RegimeRouterWDO_LOG.md`](RegimeRouterWDO_LOG.md) | Legenda mod/st + cores |
 | [`RegimeRouterWDO_smoke.ntsl`](RegimeRouterWDO_smoke.ntsl) | Smoke se o editor falhar |
 
 ---
 
-## Cascata v1.04 (10 módulos, flags ON)
+## Cascata v1.05 (10 módulos, flags ON)
 
 ```
 OB → AB → OF → PB → NY → CB → IB → RD → LF → VF
@@ -36,6 +37,17 @@ Não afrouxamos MaxBox / ADX / candle — só liberamos **VF** no buraco de regi
 Sem preço médio. Desligue no input o que for mal (**uma flag por vez**).
 
 ---
+
+## Visual (sem Experts)
+
+Profit não tem log tipo MT5. Para ver no gráfico:
+
+1. Automação continua com **`RegimeRouterWDO`** (ordens).  
+2. Compila também **`RegimeRouterWDO_viz`**.  
+3. No gráfico WDO M5 → botão direito → **Inserir Regra de Coloração** → `RegimeRouterWDO_viz`.  
+4. **Não** use o script de execução como regra de coloração (risco de ordem dupla).
+
+Cores / `Plot4(visMod)`: ver [`RegimeRouterWDO_LOG.md`](RegimeRouterWDO_LOG.md).
 
 ## Ops (sem afrouxar regra)
 
@@ -73,8 +85,9 @@ Quando for migrar parte do capital Clear → Genial: `SeedCapital` = valor aloca
 
 ## Checklist do mês
 
-- [ ] Compilou 0 erros (`v1.04` no comentário do script)  
+- [ ] Compilou execução `v1.05` + viz  
 - [ ] Automação na **sim** · **M5** · 1 contrato  
+- [ ] Regra de coloração `RegimeRouterWDO_viz` no gráfico  
 - [ ] STOP alinhado ao saldo da sim  
 - [ ] Em dia R2: VF ainda pode entrar se dist/ADX baterem  
 - [ ] Se um módulo sangrar → `Enable* = 0` (**uma** flag)
