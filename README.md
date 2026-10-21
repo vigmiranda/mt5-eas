@@ -18,18 +18,19 @@ Automação multiplataforma:
 
 | Ativo | Timeframe | EA | Magic | Versão | Papel |
 |-------|-----------|----|-------|--------|-------|
-| WINV26 / WIN$ | M5 | **RegimeRouterWIN_v1** | 260920 | 1.07 | **Único EA ativo (roteador em cascata)** |
+| WINV26 / WIN$ | M5 | **RegimeRouterWIN_v1** | 260920 | 1.08 | **Único EA ativo (roteador em cascata)** |
 
 EAs anteriores (OpenBreak, Pullback, ScalpWIN, TrendWIN) estão em [`eas/clear/archive/`](eas/clear/archive/) — **não usar no real**.
 
-**RegimeRouterWIN_v1** — cascata M5 (v1.07)
+**RegimeRouterWIN_v1** — cascata M5 (v1.08)
 - **A OpenBreak → B Pullback → D ContBreak → E VwapFade → C Preço médio** (flags `InpEnable*`)
 - **CB / VF ligados por padrão** — desligue no input se for mal (`InpEnableContBreak` / `InpEnableVwapFade`)
 - **Lock:** 1 estratégia dona até flat (PM pode abrir pernas)
 - **Aborto cedo do OB** → libera B–E antes das 11h
 - PB só entra com **sinal de pullback** (senão a cascata tenta CB)
 - CB: rompimento do range manhã (09:00→11:00) com ADX≥22 · VF: fade à VWAP se dist≥150 pts e ADX≤22
-- **R2:** OB off · **PM** bloqueado · **VF liberado** (mesmos critérios; v1.07) · PB/CB se fit
+- **R2:** OB off · **PM** bloqueado · **VF liberado** (mesmos critérios) · PB/CB se fit
+- **v1.08:** fix risco/dist em pontos (ignora cotação/SL inválidos; VF dist no close)
 - Arraste no gráfico **WIN M5** (init avisa se chart ≠ `InpTF`) — sem afrouxar MaxBox / ADX / candle PB
 - **Sem meta de lucro** · teto `InpMaxTradesDay` · **STOP DIA 5%** · semente **R$4.538,48** · magic **260920**
 - Log curto `RR …` · legenda: [`eas/clear/RegimeRouterWIN_LOG.md`](eas/clear/RegimeRouterWIN_LOG.md)
@@ -38,7 +39,7 @@ EAs anteriores (OpenBreak, Pullback, ScalpWIN, TrendWIN) estão em [`eas/clear/a
 1. Remova qualquer EA antigo do gráfico WIN (OpenBreak/Pullback/Scalp…)
 2. Copie `eas/clear/RegimeRouterWIN_v1.mq5` → `MQL5/Experts/` → **F7**
 3. Arraste no **WIN M5**, Algotrading ON
-4. Log: `RegimeRouterWIN v1.07` + `RR …` (2 linhas/M5) — ver legenda
+4. Log: `RegimeRouterWIN v1.08` + `RR …` (2 linhas/M5) — ver legenda
 5. CB/VF já vêm ON — desligue no input se precisar
 
 ### Capital virtual Clear — como funciona

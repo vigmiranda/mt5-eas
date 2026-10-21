@@ -1,8 +1,9 @@
-{ RegimeRouterWDO_viz v1.00 — SO coloracao / plots (SEM ordens)
+{ RegimeRouterWDO_viz v1.01 — SO coloracao / plots / texto (SEM ordens)
   Genial Profit Pro · WDO M5
   Aplicar: botao direito no grafico → Inserir Regra de Coloracao
   Automacao de ordens continua com RegimeRouterWDO_v1
-  Legenda: RegimeRouterWDO_LOG.md }
+  Legenda: RegimeRouterWDO_LOG.md
+  PlotText no candle = zona (OB/AB/VF/R2/POS...). Plot4=visMod Plot5=distVWAP }
 input
   BoxStart(900);
   BoxEnd(915);
@@ -104,37 +105,75 @@ begin
     visMod := 13;
 
   if (visMod = 11) then
-    PaintBar(clRed)
+  begin
+    PaintBar(clRed);
+    PlotText('STOP', clRed, 1, 8);
+  end
   else if (visMod = 12) then
-    PaintBar(clGray)
+  begin
+    PaintBar(clGray);
+    PlotText('FLAT', clGray, 1, 8);
+  end
   else if (visMod = 99) then
-    PaintBar(clLime)
+  begin
+    PaintBar(clLime);
+    PlotText('POS', clLime, 1, 9);
+  end
   else if (visMod = 1) then
-    PaintBar(clAqua)
+  begin
+    PaintBar(clAqua);
+    PlotText('OB', clAqua, 1, 8);
+  end
   else if (visMod = 2) then
-    PaintBar(clBlue)
+  begin
+    PaintBar(clBlue);
+    PlotText('AB', clBlue, 1, 8);
+  end
   else if (visMod = 3) then
-    PaintBar(clFuchsia)
+  begin
+    PaintBar(clFuchsia);
+    PlotText('OF', clFuchsia, 1, 8);
+  end
   else if (visMod = 4) then
-    PaintBar(clGreen)
+  begin
+    PaintBar(clGreen);
+    PlotText('PB', clGreen, 1, 8);
+  end
   else if (visMod = 5) then
-    PaintBar(clYellow)
+  begin
+    PaintBar(clYellow);
+    PlotText('NY', clYellow, 1, 8);
+  end
   else if (visMod = 9) then
-    PaintBar(clPurple)
+  begin
+    PaintBar(clPurple);
+    PlotText('LF', clPurple, 1, 8);
+  end
   else if (visMod = 10) then
-    PaintBar(clWhite)
+  begin
+    PaintBar(clWhite);
+    PlotText('VF', clWhite, 1, 8);
+  end
   else if (visMod = 13) then
-    PaintBar(clOlive)
+  begin
+    PaintBar(clOlive);
+    PlotText('R2', clOlive, 1, 8);
+  end
   else
+  begin
     PaintBar(clSilver);
+    PlotText('IDLE', clSilver, 0, 7);
+  end;
 
   Plot(emaF);
   Plot2(emaS);
   Plot3(vwapV);
   Plot4(visMod);
+  PlotN(5, distPts);
   SetPlotColor(1, clYellow);
   SetPlotColor(2, clBlue);
   SetPlotColor(3, clWhite);
   SetPlotColor(4, clLime);
+  SetPlotColor(5, clSkyBlue);
 
 end;
