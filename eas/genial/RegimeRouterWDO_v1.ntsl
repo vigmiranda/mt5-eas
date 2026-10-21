@@ -1,14 +1,17 @@
-{ RegimeRouterWDO v1.05 — Genial/Profit Pro/WDO M5
+{ RegimeRouterWDO v1.06 - Genial/Profit Pro/WDO M5
   Cascata OB>AB>OF>PB>NY>CB>IB>RD>LF>VF | lock ate flat
   v1.04: VF elegivel em R2 (mesmos criterios); OB/LF off em R2
-  v1.05: Plot4(visMod) + cores das linhas — visual no chart
-  Cores dos candles: use RegimeRouterWDO_viz (nao inserir ESTE como coloracao) }
+  v1.05: Plot4(visMod) + cores das linhas
+  v1.06: ConsoleLog na aba Eventos da Automacao (tipo Experts MT5)
+  Cores dos candles: use RegimeRouterWDO_viz (nao inserir ESTE como coloracao)
+  Se ConsoleLog der erro de sintaxe: Profit antigo - atualize ou EnableConsoleLog=0 }
 input
   SeedCapital(0.0);
   StopDiaPct(5.0);
   StopDiaReais(250.0);
   MaxTradesDay(12);
   FlatHora(1750);
+  EnableConsoleLog(1);
 
   EnableOpenBreak(1);
   EnableAsiaBreak(1);
@@ -117,7 +120,7 @@ var
   entrySL, entryTP, fibLo, fibHi, mid : Float;
   dayPnL, stopLim, buf, sl, entry, risk, riskPts, distPts, rangePts : Float;
   hh, ll : Float;
-  visMod : Integer;
+  visMod, lastLogTime, prevLocked : Integer;
 
 begin
   tick := MinPriceIncrement;
@@ -165,6 +168,8 @@ begin
     entrySL := 0;
     entryTP := 0;
     pbDirI := 0;
+    lastLogTime := 0;
+    prevLocked := 0;
   end;
 
   emaF := MediaExp(EMAFast, Close);
@@ -816,5 +821,29 @@ begin
   SetPlotColor(2, clBlue);
   SetPlotColor(3, clWhite);
   SetPlotColor(4, clLime);
+
+  {--- ConsoleLog -> aba Eventos da Automacao (equiv. Experts MT5) ---}
+  if (EnableConsoleLog = 1) then
+  begin
+    if (lockedMod > 0) and (lockedMod <> prevLocked) then
+    begin
+      ConsoleLog("RR ! ENTRADA mod=" + FloatToString(lockedMod, 0) + " st=" + FloatToString(statusCode, 0) + " cx=" + FloatToString(boxPts, 0) + " ADX=" + FloatToString(adxV, 0) + " dPnL=" + FloatToString(dayPnL, 0), clLime);
+      prevLocked := lockedMod;
+    end;
+    if (lockedMod = 0) then
+      prevLocked := 0;
+    if (Time <> lastLogTime) then
+    begin
+      lastLogTime := Time;
+      if (statusCode = 11) then
+        ConsoleLog("RR " + FloatToString(Time, 0) + " | STOP | dPnL=" + FloatToString(dayPnL, 0) + " lim=" + FloatToString(stopLim, 0), clRed)
+      else if (visMod = 13) or ((r2Day = 1) and (lockedMod = 0) and (activeMod = 0)) then
+        ConsoleLog("RR " + FloatToString(Time, 0) + " | R2 IDLE | cx=" + FloatToString(boxPts, 0) + " ADX=" + FloatToString(adxV, 0) + " dPnL=" + FloatToString(dayPnL, 0) + " t=" + FloatToString(tradesToday, 0), clOlive)
+      else if (lockedMod > 0) then
+        ConsoleLog("RR " + FloatToString(Time, 0) + " | LOCK mod=" + FloatToString(lockedMod, 0) + " | cx=" + FloatToString(boxPts, 0) + " ADX=" + FloatToString(adxV, 0) + " dPnL=" + FloatToString(dayPnL, 0), clAqua)
+      else
+        ConsoleLog("RR " + FloatToString(Time, 0) + " | mod=" + FloatToString(activeMod, 0) + " st=" + FloatToString(statusCode, 0) + " | cx=" + FloatToString(boxPts, 0) + " ADX=" + FloatToString(adxV, 0) + " R2=" + FloatToString(r2Day, 0) + " t=" + FloatToString(tradesToday, 0) + " dPnL=" + FloatToString(dayPnL, 0), clWhite);
+    end;
+  end;
 
 end;
