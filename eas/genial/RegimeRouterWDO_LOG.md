@@ -1,9 +1,9 @@
-# RegimeRouterWDO — legenda (Profit Pro / Genial) v1.05
+# RegimeRouterWDO — legenda (Profit Pro / Genial) v1.05 + viz 1.01
 
 Plataforma: **Profit Pro** · Corretora: **Genial (sim)** · Ativo: **WDO** · TF: **M5**  
 Arquivos:
 - [`RegimeRouterWDO_v1.ntsl`](RegimeRouterWDO_v1.ntsl) — **execução** (Automação)
-- [`RegimeRouterWDO_viz.ntsl`](RegimeRouterWDO_viz.ntsl) — **só visual** (Regra de Coloração)
+- [`RegimeRouterWDO_viz.ntsl`](RegimeRouterWDO_viz.ntsl) — **só visual** (Regra de Coloração) v1.01
 
 ---
 
@@ -31,40 +31,42 @@ OB → AB → OF → PB → NY → CB → IB → RD → LF → VF
 
 ---
 
-## Visual no gráfico (v1.05)
+## Visual / “log pobre” do Profit
 
-Profit **não tem** Experts. Use:
+Profit **não tem** Experts. Para analisar o dia use **os três** juntos:
 
-1. **Automação** = `RegimeRouterWDO` (ordens) — não inserir este como coloração.  
-2. No gráfico WDO M5: botão direito → **Inserir Regra de Coloração** → `RegimeRouterWDO_viz`.
+1. **Automação** = `RegimeRouterWDO` (ordens) — aba **Eventos** + **Resumo** (Op Totais / Res. Dia).  
+2. Gráfico: **Regra de Coloração** = `RegimeRouterWDO_viz` (v1.01) — cor + **texto no candle** (`OB`/`VF`/`R2`/`IDLE`…).  
+3. Print no fim do pregão: gráfico com textos + janela Automações (Eventos se houver linhas).
 
-### Cores dos candles (`RegimeRouterWDO_viz`)
+### Cores + PlotText (`RegimeRouterWDO_viz` v1.01)
 
-| Cor | visMod | Significado |
-|-----|--------|-------------|
-| Prata | 0 | Idle / sem zona clara |
-| Aqua | 1 | Janela OB (caixa ok) |
-| Azul | 2 | Janela AB / manhã cedo |
-| Fúcsia | 3 | Zona OF (ADX baixo manhã) |
-| Verde | 4 | Tendência (PB/CB-like) |
-| Amarelo | 5 | Janela NY |
-| Roxo | 9 | Zona LF (almoço + dist VWAP) |
-| Branco | 10 | Zona VF (extensão VWAP) |
-| Oliva | 13 | Dia **R2** sem zona VF |
-| Lima | 99 | Conta **com posição** |
-| Vermelho | 11 | STOP DIA (≈ `StopDiaReais`) |
-| Cinza | 12 | Após flat / fim sessão |
+| Cor | Texto | visMod | Significado |
+|-----|-------|--------|-------------|
+| Prata | IDLE | 0 | Sem zona clara |
+| Aqua | OB | 1 | Janela OB (caixa ok) |
+| Azul | AB | 2 | Janela AB / manhã cedo |
+| Fúcsia | OF | 3 | Zona OF (ADX baixo manhã) |
+| Verde | PB | 4 | Tendência (PB/CB-like) |
+| Amarelo | NY | 5 | Janela NY |
+| Roxo | LF | 9 | Zona LF (almoço + dist VWAP) |
+| Branco | VF | 10 | Zona VF (extensão VWAP) |
+| Oliva | R2 | 13 | Dia **R2** sem zona VF |
+| Lima | POS | 99 | Conta **com posição** |
+| Vermelho | STOP | 11 | STOP DIA |
+| Cinza | FLAT | 12 | Após flat / fim sessão |
 
-> A viz **aproxima** a cascata por horário/indicadores — não é o `lock` interno da Automação. Confirme entradas na janela **Automações** / **Ordens**.
+> A viz **aproxima** a cascata — não é o `lock` da Automação. Ordens reais = Automações / Ordens / Eventos.
 
-### Linhas (exec + viz)
+### Linhas (viz)
 
 | Plot | Linha | Cor |
 |------|-------|-----|
 | 1 | EMA rápida | Amarelo |
 | 2 | EMA lenta | Azul |
 | 3 | VWAP | Branco |
-| 4 | `visMod` (número) | Lima |
+| 4 | `visMod` | Lima |
+| 5 | dist à VWAP (ticks) | SkyBlue |
 
 ---
 

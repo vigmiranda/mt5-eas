@@ -97,6 +97,8 @@ Após range manhã (09:00 → `InpCB_RangeEnd`, default 11:00), com ADX ≥ `Inp
 Preço longe da VWAP de sessão (≥ `InpVF_MinDistPts`) e ADX ≤ `InpVF_ADXMax`: fade de volta à VWAP (1 entrada, TP = VWAP).  
 **v1.07:** também elegível em dia **R2** (mesmos critérios de distância/ADX — não afrouxa entrada). PM continua bloqueado em R2.
 
+**v1.08 (bugfix):** risco/distância em pontos rejeitam cotação ou SL inválidos (`entry<=0`, `sl<=0`, risco &gt; 5000 pts). VF mede dist no **close** da barra (não bid live). PB não consome sinal se o risco for absurdo.
+
 **Ops (sem afrouxar regra):** arraste o EA no gráfico **WIN M5**. Se o chart ≠ `InpTF`, o init loga `RR ! | AVISO chart≠InpTF`.
 
 ---
@@ -104,7 +106,7 @@ Preço longe da VWAP de sessão (≥ `InpVF_MinDistPts`) e ADX ≤ `InpVF_ADXMax
 ## Telinha do gráfico (`Comment`)
 
 ```
-RR v1.07 WIN$N | R5 CB | CB rng 128400-128820
+RR v1.08 WIN$N | R5 CB | CB rng 128400-128820
 ...
 OB1 PB1 CB0 VF0 PM1 | free | cx=420(OK)
 ```

@@ -9,9 +9,10 @@
 //| v1.05: log M5 abreviado (2 linhas) + telinha enxuta              |
 //| v1.06: ContBreak (D) + VWAP fade (E) — flags on (desligue se ruim)|
 //| v1.07: VF liberado em R2 (mesmos critérios); aviso se chart ≠ InpTF|
+//| v1.08: fix risco/dist pts (cotação/SL=0) + VF dist no close da barra|
 //+------------------------------------------------------------------+
 #property copyright "Vitor / mt5-eas"
-#property version   "1.07"
+#property version   "1.08"
 #property strict
 
 #include <Trade/Trade.mqh>
@@ -683,8 +684,60 @@ double TickSize()
 }
 
 //+------------------------------------------------------------------+
+// Diff de preço → pontos de índice (mesmo critério da caixa: / _Point)
+double PriceDiffToPts(const double a, const double b)
+{
+   if(_Point > 0.0)
+      return MathAbs(a - b) / _Point;
+   return MathAbs(a - b);
+}
+
+//+------------------------------------------------------------------+
+bool QuotesOk(double &bid, double &ask)
+{
+   bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   return (bid > 0.0 && ask > 0.0 && ask >= bid);
+}
+
+//+------------------------------------------------------------------+
+// Risco SL válido em pts. Rejeita SL/entry zerados e valores absurdos
+// (log 21/10: "risco 211905 pts" = preço absoluto, cotação/SL inválidos).
+bool RiskPtsOk(const double entry, const double sl,
+               const int minPts, const int maxPts,
+               double &riskPtsOut, string &why)
+{
+   riskPtsOut = 0.0;
+   why = "";
+   if(entry <= 0.0)
+   {
+      why = "entry<=0 (sem cotacao)";
+      return false;
+   }
+   if(sl <= 0.0)
+   {
+      why = "sl<=0 (SL invalido)";
+      return false;
+   }
+   riskPtsOut = PriceDiffToPts(entry, sl);
+   // Sanity: risco tipico WIN << preco; >5000 pts = bug/cotacao
+   if(riskPtsOut > 5000.0)
+   {
+      why = StringFormat("risco absurdo %.0f pts (entry=%.0f sl=%.0f)", riskPtsOut, entry, sl);
+      return false;
+   }
+   if(riskPtsOut < (double)minPts || riskPtsOut > (double)maxPts)
+   {
+      why = StringFormat("risco %.0f pts fora [%d–%d]", riskPtsOut, minPts, maxPts);
+      return false;
+   }
+   return true;
+}
+
+//+------------------------------------------------------------------+
 double SnapPrice(const double price)
 {
+   if(price <= 0.0) return 0.0;
    double ts = TickSize();
    if(ts <= 0.0) return price;
    return NormalizeDouble(MathRound(price / ts) * ts, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS));
@@ -1125,16 +1178,26 @@ bool PatternVwapFade(string &why)
       why = StringFormat("VF ADX %.1f > %.0f (deixa p/ tendência)", g_adx, InpVF_ADXMax);
       return false;
    }
-   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   double dist = MathAbs(bid - g_vwap);
-   double distPts = (_Point > 0.0 ? dist / _Point : dist);
+   // Usa close da barra fechada (não bid live) — bid=0 gerava dist≈VWAP e falso R6
+   double close1 = iClose(_Symbol, InpTF, 1);
+   if(close1 <= 0.0)
+   {
+      why = "VF sem close";
+      return false;
+   }
+   double distPts = PriceDiffToPts(close1, g_vwap);
+   if(distPts > 5000.0)
+   {
+      why = StringFormat("VF dist absurda %.0f (close=%.0f VWAP=%.0f)", distPts, close1, g_vwap);
+      return false;
+   }
    if(distPts < InpVF_MinDistPts)
    {
       why = StringFormat("VF perto VWAP dist=%.0f < %d", distPts, InpVF_MinDistPts);
       return false;
    }
    why = StringFormat("VF dist=%.0f pts VWAP=%.0f ADX=%.1f %s",
-                      distPts, g_vwap, g_adx, (bid > g_vwap ? "fade SELL" : "fade BUY"));
+                      distPts, g_vwap, g_adx, (close1 > g_vwap ? "fade SELL" : "fade BUY"));
    return true;
 }
 
@@ -1587,8 +1650,12 @@ void ModulePullback()
 
    if(g_pbDir == 0 || g_pbConsumed) return;
 
-   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double ask = 0.0, bid = 0.0;
+   if(!QuotesOk(bid, ask))
+   {
+      LogSkip("Pullback sem cotacao bid/ask");
+      return;
+   }
    double offset = (double)InpPB_EntryOffsetPts;
    if(_Point > 0.0 && MathAbs(_Point - 1.0) > 1e-8)
       offset = InpPB_EntryOffsetPts * _Point;
@@ -1600,23 +1667,33 @@ void ModulePullback()
       return;
    }
 
-   g_pbConsumed = true;
    double price = (g_pbDir > 0 ? ask : bid);
    double sl = (g_pbDir > 0) ? (g_pbLow - InpPB_BufferPts) : (g_pbHigh + InpPB_BufferPts);
    if(_Point > 0.0 && MathAbs(_Point - 1.0) > 1e-8)
       sl = (g_pbDir > 0) ? (g_pbLow - InpPB_BufferPts * _Point)
                          : (g_pbHigh + InpPB_BufferPts * _Point);
    sl = SnapPrice(sl);
-   double risk = MathAbs(price - sl);
-   double riskPts = (_Point > 0.0 ? risk / _Point : risk);
-   if(riskPts < InpPB_MinRiskPts || riskPts > InpPB_MaxRiskPts)
+   double riskPts = 0.0;
+   string riskWhy = "";
+   if(!RiskPtsOk(price, sl, InpPB_MinRiskPts, InpPB_MaxRiskPts, riskPts, riskWhy))
    {
-      LogSkip(StringFormat("Pullback risco %.0f pts fora [%d–%d]", riskPts, InpPB_MinRiskPts, InpPB_MaxRiskPts));
+      LogSkip(StringFormat("Pullback %s", riskWhy));
+      // Absurdo (cotação/SL): não consome sinal — tenta de novo
+      if(StringFind(riskWhy, "absurdo") >= 0 || StringFind(riskWhy, "<=") >= 0)
+         return;
+      g_pbConsumed = true;
       return;
    }
+   double risk = MathAbs(price - sl);
    double tp = (g_pbDir > 0) ? (price + InpPB_RewardRisk * risk) : (price - InpPB_RewardRisk * risk);
    tp = SnapPrice(tp);
+   if(tp <= 0.0)
+   {
+      LogSkip("Pullback TP invalido");
+      return;
+   }
 
+   g_pbConsumed = true;
    if(OpenMarket(g_pbDir, sl, tp, "PB"))
    {
       g_tradesPB++;
@@ -1643,7 +1720,12 @@ void ModuleContBreak()
    double buf = InpCB_BreakBufferPts * (_Point > 0.0 ? _Point : 1.0);
    if(MathAbs(_Point - 1.0) < 1e-8) buf = (double)InpCB_BreakBufferPts;
 
-   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double bid = 0.0, ask = 0.0;
+   if(!QuotesOk(bid, ask))
+   {
+      LogSkip("CB sem cotacao bid/ask");
+      return;
+   }
    bool trendUp = (g_emaFast > g_emaSlow && bid > g_emaFast);
    bool trendDn = (g_emaFast < g_emaSlow && bid < g_emaFast);
 
@@ -1662,7 +1744,6 @@ void ModuleContBreak()
       return;
    }
 
-   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    double entry = (dir > 0 ? ask : bid);
    double sl = (dir > 0) ? g_amLow : g_amHigh;
    if(_Point > 0.0 && MathAbs(_Point - 1.0) > 1e-8)
@@ -1671,15 +1752,21 @@ void ModuleContBreak()
    else
       sl = (dir > 0) ? (g_amLow - InpCB_BreakBufferPts) : (g_amHigh + InpCB_BreakBufferPts);
    sl = SnapPrice(sl);
-   double risk = MathAbs(entry - sl);
-   double riskPts = (_Point > 0.0 ? risk / _Point : risk);
-   if(riskPts < InpCB_MinRiskPts || riskPts > InpCB_MaxRiskPts)
+   double riskPts = 0.0;
+   string riskWhy = "";
+   if(!RiskPtsOk(entry, sl, InpCB_MinRiskPts, InpCB_MaxRiskPts, riskPts, riskWhy))
    {
-      LogSkip(StringFormat("CB risco %.0f pts fora [%d–%d]", riskPts, InpCB_MinRiskPts, InpCB_MaxRiskPts));
+      LogSkip(StringFormat("CB %s", riskWhy));
       return;
    }
+   double risk = MathAbs(entry - sl);
    double tp = (dir > 0) ? (entry + InpCB_RewardRisk * risk) : (entry - InpCB_RewardRisk * risk);
    tp = SnapPrice(tp);
+   if(tp <= 0.0)
+   {
+      LogSkip("CB TP invalido");
+      return;
+   }
 
    if(OpenMarket(dir, sl, tp, "CB"))
    {
@@ -1700,25 +1787,38 @@ void ModuleVwapFade()
 
    datetime barTime = iTime(_Symbol, InpTF, 1);
    if(barTime == 0 || barTime == g_lastBarVF) return;
-   g_lastBarVF = barTime;
 
    double close1 = iClose(_Symbol, InpTF, 1);
    double high1 = iHigh(_Symbol, InpTF, 1);
    double low1 = iLow(_Symbol, InpTF, 1);
-   if(close1 <= 0.0) return;
+   if(close1 <= 0.0 || high1 <= 0.0 || low1 <= 0.0)
+   {
+      LogSkip("VF sem OHLC da barra");
+      return;
+   }
 
-   double dist = MathAbs(close1 - g_vwap);
-   double distPts = (_Point > 0.0 ? dist / _Point : dist);
+   double distPts = PriceDiffToPts(close1, g_vwap);
+   if(distPts > 5000.0)
+   {
+      LogSkip(StringFormat("VF dist absurda %.0f close=%.0f VWAP=%.0f", distPts, close1, g_vwap));
+      return;
+   }
    if(distPts < InpVF_MinDistPts)
    {
       LogSkip(StringFormat("VF dist=%.0f < %d", distPts, InpVF_MinDistPts));
+      g_lastBarVF = barTime;
       return;
+   }
+
+   double ask = 0.0, bid = 0.0;
+   if(!QuotesOk(bid, ask))
+   {
+      LogSkip("VF sem cotacao bid/ask");
+      return; // nao queima a barra — cotacao pode voltar
    }
 
    // Acima da VWAP → fade SELL; abaixo → fade BUY
    int dir = (close1 > g_vwap) ? -1 : 1;
-   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    double entry = (dir > 0 ? ask : bid);
    double buf = InpVF_BufferPts * (_Point > 0.0 ? _Point : 1.0);
    if(MathAbs(_Point - 1.0) < 1e-8) buf = (double)InpVF_BufferPts;
@@ -1726,25 +1826,31 @@ void ModuleVwapFade()
    double sl = (dir > 0) ? (low1 - buf) : (high1 + buf);
    sl = SnapPrice(sl);
    double tp = SnapPrice(g_vwap);
-   double risk = MathAbs(entry - sl);
-   double riskPts = (_Point > 0.0 ? risk / _Point : risk);
-   if(riskPts < InpVF_MinRiskPts || riskPts > InpVF_MaxRiskPts)
+   double riskPts = 0.0;
+   string riskWhy = "";
+   if(!RiskPtsOk(entry, sl, InpVF_MinRiskPts, InpVF_MaxRiskPts, riskPts, riskWhy))
    {
-      LogSkip(StringFormat("VF risco %.0f pts fora [%d–%d]", riskPts, InpVF_MinRiskPts, InpVF_MaxRiskPts));
+      LogSkip(StringFormat("VF %s", riskWhy));
+      if(StringFind(riskWhy, "absurdo") >= 0 || StringFind(riskWhy, "<=") >= 0)
+         return;
+      g_lastBarVF = barTime;
       return;
    }
    // TP deve estar a favor
-   if(dir > 0 && tp <= entry)
+   if(dir > 0 && (tp <= 0.0 || tp <= entry))
    {
       LogSkip("VF TP VWAP não favorece BUY");
+      g_lastBarVF = barTime;
       return;
    }
-   if(dir < 0 && tp >= entry)
+   if(dir < 0 && (tp <= 0.0 || tp >= entry))
    {
       LogSkip("VF TP VWAP não favorece SELL");
+      g_lastBarVF = barTime;
       return;
    }
 
+   g_lastBarVF = barTime;
    if(OpenMarket(dir, sl, tp, "VF"))
    {
       g_tradesVF++;
@@ -1957,7 +2063,7 @@ void UpdateChartComment()
       : (g_obAborted ? "OBabort" : "free");
 
    string txt = StringFormat(
-      "RR v1.07 %s | %s %s | %s\n"
+      "RR v1.08 %s | %s %s | %s\n"
       "%s\n"
       "OB%d PB%d CB%d VF%d PM%d | %s | cx=%.0f(%s)\n"
       "ADX%.0f EMA%.0f/%.0f ATR%.0f VWAP%.0f spr%d\n"
@@ -2015,15 +2121,17 @@ int OnInit()
    ResetDayIfNeeded();
    RefreshIndicators();
 
-   Print("========== RegimeRouterWIN v1.07 ==========");
+   Print("========== RegimeRouterWIN v1.08 ==========");
    Print("RR init | cascata OB>PB>CB>VF>PM | lock flat | sem meta | log curto");
-   Print("RR init | v1.07 VF também em R2 (critérios iguais) | PM continua bloqueado em R2");
+   Print("RR init | v1.08 fix risco/dist pts (guarda cotacao/SL) | VF dist no close");
    PrintFormat("RR init | flags OB=%d PB=%d CB=%d VF=%d PM=%d | maxT=%d | STOP=%.0f%% (~R$%.0f)",
                (InpEnableOpenBreak ? 1 : 0), (InpEnablePullback ? 1 : 0),
                (InpEnableContBreak ? 1 : 0), (InpEnableVwapFade ? 1 : 0), (InpEnablePrecoMedio ? 1 : 0),
                InpMaxTradesDay, InpStopDiaPct, DailyLossLimitMoney());
    PrintFormat("RR init | seed=R$%.2f (chart=R$%.2f) | vol=%.0f | magic=%I64d",
                g_seedCapital, InpClearSaldo, CalcVolume(), InpMagic);
+   PrintFormat("RR init | Point=%.5f TickSize=%.5f Digits=%d",
+               _Point, TickSize(), (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS));
    PrintFormat("RR init | CB rangeEnd %02d:%02d ADX>=%.0f | VF dist>=%d ADX<=%.0f | PB ADX>=%.0f PM<=%.0f",
                InpCB_RangeEndH, InpCB_RangeEndM, InpCB_ADXMin, InpVF_MinDistPts, InpVF_ADXMax,
                InpADX_TrendMin, InpADX_LateralMax);
