@@ -800,7 +800,7 @@ begin
     end;
   end;
 
-  {--- visual: modulo ativo/lock (subplot Plot4) — ver RegimeRouterWDO_LOG.md ---}
+  {--- visual: modulo ativo/lock (subplot Plot4) - ver RegimeRouterWDO_LOG.md ---}
   visMod := lockedMod;
   if (visMod = 0) then
     visMod := activeMod;

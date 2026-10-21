@@ -5,7 +5,7 @@ Conta **simulação** Genial · **Profit Pro** · **WDO** M5 · teste ~**1 mês*
 
 | Arquivo | Uso |
 |---------|-----|
-| [`RegimeRouterWDO_v1.ntsl`](RegimeRouterWDO_v1.ntsl) | **Execução** — Automação (**v1.05**) |
+| [`RegimeRouterWDO_v1.ntsl`](RegimeRouterWDO_v1.ntsl) | **Execução** — Automação (**v1.06** + `ConsoleLog` na aba Eventos) |
 | [`RegimeRouterWDO_viz.ntsl`](RegimeRouterWDO_viz.ntsl) | **Só visual** v1.02 — cor + PlotText no candle (sem ordens) |
 | [`RegimeRouterWDO_LOG.md`](RegimeRouterWDO_LOG.md) | Legenda mod/st + cores |
 | [`RegimeRouterWDO_smoke.ntsl`](RegimeRouterWDO_smoke.ntsl) | Smoke se o editor falhar |
@@ -42,7 +42,7 @@ Sem preço médio. Desligue no input o que for mal (**uma flag por vez**).
 
 Profit não tem log tipo MT5. Para **analisar** o dia:
 
-1. Automação = **`RegimeRouterWDO`** (ordens) — olhe aba **Eventos** + Op Totais / Res. Dia.  
+1. Automação = **`RegimeRouterWDO` v1.06** — aba **Eventos** recebe `ConsoleLog` (`RR …` a cada M5, tipo Experts). Se der erro de sintaxe em `ConsoleLog`, Profit antigo: atualize ou `EnableConsoleLog=0`.  
 2. Compila **`RegimeRouterWDO_viz`** v1.02 (raw GitHub, texto puro).  
 3. Gráfico WDO M5 → **Inserir Regra de Coloração** → `RegimeRouterWDO_viz`.  
 4. No candle aparece texto (`OB`/`VF`/`R2`/`IDLE`…) + cor.  

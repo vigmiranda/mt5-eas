@@ -2,7 +2,7 @@
 
 Plataforma: **Profit Pro** · Corretora: **Genial (sim)** · Ativo: **WDO** · TF: **M5**  
 Arquivos:
-- [`RegimeRouterWDO_v1.ntsl`](RegimeRouterWDO_v1.ntsl) — **execução** (Automação)
+- [`RegimeRouterWDO_v1.ntsl`](RegimeRouterWDO_v1.ntsl) — **execução** (Automação) v1.06 — `ConsoleLog` na aba **Eventos**
 - [`RegimeRouterWDO_viz.ntsl`](RegimeRouterWDO_viz.ntsl) — **só visual** (Regra de Coloração) v1.02
 
 ---
@@ -35,9 +35,21 @@ OB → AB → OF → PB → NY → CB → IB → RD → LF → VF
 
 Profit **não tem** Experts. Para analisar o dia use **os três** juntos:
 
-1. **Automação** = `RegimeRouterWDO` (ordens) — aba **Eventos** + **Resumo** (Op Totais / Res. Dia).  
-2. Gráfico: **Regra de Coloração** = `RegimeRouterWDO_viz` (v1.01) — cor + **texto no candle** (`OB`/`VF`/`R2`/`IDLE`…).  
-3. Print no fim do pregão: gráfico com textos + janela Automações (Eventos se houver linhas).
+1. **Automação** = `RegimeRouterWDO` v1.06 — aba **Eventos** com linhas `RR …` (`ConsoleLog`, a cada M5).  
+2. Gráfico: **Regra de Coloração** = `RegimeRouterWDO_viz` — cor + texto no candle.  
+3. **Resumo**: Op Totais / Res. Dia.  
+
+### ConsoleLog (Eventos) — v1.06
+
+| Prefixo | Quando |
+|---------|--------|
+| `RR HHMM \| mod=… st=… cx=… ADX=…` | Pulse a cada barra M5 |
+| `RR … \| R2 IDLE \| …` | Dia R2 sem módulo |
+| `RR … \| LOCK mod=…` | Posição aberta |
+| `RR … \| STOP \| …` | STOP DIA |
+| `RR ! ENTRADA mod=…` | Acabou de travar um módulo |
+
+`mod` 1–10 = OB…VF (mesma tabela). Se o Editor não compilar `ConsoleLog`, o Profit é antigo demais — atualize o app ou desligue `EnableConsoleLog`.
 
 ### Cores + PlotText (`RegimeRouterWDO_viz` v1.01)
 
