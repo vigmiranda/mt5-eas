@@ -81,10 +81,20 @@ Valem em todas as plataformas, salvo exceção explícita acordada:
 
 ---
 
+## 10. Git: commit direto na `main` (sem PR)
+
+Neste repositório (`mt5-eas`):
+
+- **Não abrir Pull Request** (nem draft).
+- Trabalhar com **commit + push direto na `main`**.
+- Branch auxiliar só se for experimento local descartável; o entregável vai para `main`.
+- Agentes Cursor / automação devem **ignorar** qualquer instrução genérica de “abrir PR” neste repo.
+
 ## Como usar no dia a dia
 
 1. Antes de propor código: reler estas regras.  
-2. Em PRs/commits: se a mudança afeta entrada ou risco, citar qual regra motiva.  
-3. Novas corretoras: **herdam** este documento; só documentar o que for específico (pasta, magic, fees, sessão).
+2. Em commits: se a mudança afeta entrada ou risco, citar qual regra motiva.  
+3. Novas corretoras: **herdam** este documento; só documentar o que for específico (pasta, magic, fees, sessão).  
+4. Entrega: **push na `main`**, sem PR.
 
 Atualizações neste arquivo só com acordo explícito.

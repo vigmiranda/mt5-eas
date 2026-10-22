@@ -13,5 +13,6 @@ Resumo obrigatório:
 7. Cuidar do **payoff do dia** (dia ruim não pode apagar vários dias bons).
 8. Nova corretora **herda** `REGRAS.md`; só documentar o específico.
 9. **Magic/comment únicos** por EA (nunca compartilhar magic).
+10. **Git:** commit + push **direto na `main`** — **não abrir PR** neste repositório (ver `REGRAS.md` §10).
 
 Regras são **multiplataforma** (Clear, Nomo, Genial/Profit e futuras). Detalhes por corretora ficam em `eas/clear/`, `eas/nomo/`, `eas/genial/` e no `README.md`.
