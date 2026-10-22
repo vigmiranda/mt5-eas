@@ -87,11 +87,12 @@ Demais EAs Nomo (ScalpXAU, Pattern, Trend*, Grid BTC, etc.) estão em [`eas/nomo
 
 | Ativo | Timeframe | Estratégia | Versão | Papel |
 |-------|-----------|------------|--------|-------|
-| WDO$ | M5 | **RegimeRouterWDO_v1** | 1.05 | Único robô ativo na sim Genial |
+| WDO$ | M5 | **RegimeRouterWDO_v1** | 1.07 | Único robô ativo na sim Genial |
 
 **RegimeRouterWDO_v1** — cascata larga p/ teste Genial (dólar) · DNA alinhado ao WIN
 - `OB → AB → OF → PB → NY → CB → IB → RD → LF → VF` (flags ON)
 - **R2:** OB/LF off · **VF on** · demais se fit
+- **OB v1.07:** BE + trail SL; TP +1 a cada 2 subidas do SL (teto `OB_TP_MaxPts`)
 - **Visual:** `RegimeRouterWDO_viz` = Regra de Coloração no gráfico (sem ordens); execução só na Automação
 - Automação **WDO M5** · 1 contrato · sem preço médio
 - STOP via `SeedCapital` (5%) ou `StopDiaReais`

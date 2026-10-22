@@ -1,8 +1,9 @@
-{ RegimeRouterWDO v1.06 - Genial/Profit Pro/WDO M5
+{ RegimeRouterWDO v1.07 - Genial/Profit Pro/WDO M5
   Cascata OB>AB>OF>PB>NY>CB>IB>RD>LF>VF | lock ate flat
   v1.04: VF elegivel em R2 (mesmos criterios); OB/LF off em R2
   v1.05: Plot4(visMod) + cores das linhas
   v1.06: ConsoleLog na aba Eventos da Automacao (tipo Experts MT5)
+  v1.07: OB BE+trail SL; TP avanca 1 a cada 2 subidas do SL (so OB)
   Cores dos candles: use RegimeRouterWDO_viz (nao inserir ESTE como coloracao)
   Se ConsoleLog der erro de sintaxe: Profit antigo - atualize ou EnableConsoleLog=0 }
 input
@@ -32,6 +33,10 @@ input
   OB_BreakBufferPts(4);
   OB_StopPts(40);
   OB_GainPts(60);
+  OB_EnableTrail(1);
+  OB_BE_Pts(25);
+  OB_TrailStepPts(10);
+  OB_TP_MaxPts(100);
 
   AB_Start(915);
   AB_End(1030);
@@ -114,12 +119,13 @@ var
   tradesToday, tradesOB, tradesAB, tradesOF, tradesPB : Integer;
   tradesNY, tradesCB, tradesIB, tradesRD, tradesLF, tradesVF : Integer;
   pbDirI : Integer;
+  obBeDone, obTrailSteps, obSlMoves, wantTrail, tpAdv : Integer;
   boxH, boxL, boxPts, amH, amL, prevH, prevL : Float;
   dayH, dayL, dayOpen, nyH, nyL : Float;
   emaF, emaS, adxV, vwapV, tick, atrV, atrAvg : Float;
   entrySL, entryTP, fibLo, fibHi, mid : Float;
   dayPnL, stopLim, buf, sl, entry, risk, riskPts, distPts, rangePts : Float;
-  hh, ll : Float;
+  hh, ll, obEntryPx, favorPts, extraPts, newTpPts : Float;
   visMod, lastLogTime, prevLocked : Integer;
 
 begin
@@ -170,6 +176,10 @@ begin
     pbDirI := 0;
     lastLogTime := 0;
     prevLocked := 0;
+    obBeDone := 0;
+    obTrailSteps := 0;
+    obSlMoves := 0;
+    obEntryPx := 0;
   end;
 
   emaF := MediaExp(EMAFast, Close);
@@ -297,6 +307,63 @@ begin
     if (lockedMod = 0) then
       lockedMod := activeMod;
     activeMod := lockedMod;
+
+    {--- OB v1.07: BE + trail SL; TP +1 a cada 2 subidas do SL ---}
+    if (lockedMod = 1) and (OB_EnableTrail = 1) then
+    begin
+      if (obEntryPx <= 0) then
+      begin
+        if IsBought then
+          obEntryPx := BuyPrice
+        else if IsSold then
+          obEntryPx := SellPrice;
+      end;
+
+      if (obEntryPx > 0) and (tick > 0) then
+      begin
+        if IsBought then
+          favorPts := (Close - obEntryPx) / tick
+        else
+          favorPts := (obEntryPx - Close) / tick;
+
+        if (obBeDone = 0) and (favorPts >= OB_BE_Pts) then
+        begin
+          entrySL := obEntryPx;
+          obBeDone := 1;
+          obSlMoves := 1;
+          if (EnableConsoleLog = 1) then
+            ConsoleLog("RR ! OB BE SL@" + FloatToString(entrySL, 1) + " fav=" + FloatToString(favorPts, 0), clYellow);
+        end;
+
+        if (obBeDone = 1) and (OB_TrailStepPts > 0) then
+        begin
+          extraPts := favorPts - OB_BE_Pts;
+          if (extraPts < 0) then
+            extraPts := 0;
+          wantTrail := extraPts / OB_TrailStepPts;
+          if (wantTrail > obTrailSteps) then
+          begin
+            obTrailSteps := wantTrail;
+            if IsBought then
+              entrySL := obEntryPx + obTrailSteps * OB_TrailStepPts * tick
+            else
+              entrySL := obEntryPx - obTrailSteps * OB_TrailStepPts * tick;
+            obSlMoves := 1 + obTrailSteps;
+            tpAdv := obSlMoves / 2;
+            newTpPts := OB_GainPts + tpAdv * OB_TrailStepPts;
+            if (newTpPts > OB_TP_MaxPts) then
+              newTpPts := OB_TP_MaxPts;
+            if IsBought then
+              entryTP := obEntryPx + newTpPts * tick
+            else
+              entryTP := obEntryPx - newTpPts * tick;
+            if (EnableConsoleLog = 1) then
+              ConsoleLog("RR ! OB TRAIL slMoves=" + FloatToString(obSlMoves, 0) + " tpAdv=" + FloatToString(tpAdv, 0) + " SL@" + FloatToString(entrySL, 1) + " TP@" + FloatToString(entryTP, 1), clYellow);
+          end;
+        end;
+      end;
+    end;
+
     if IsBought then
     begin
       if (entrySL > 0) then
@@ -315,6 +382,10 @@ begin
   else
   begin
     lockedMod := 0;
+    obBeDone := 0;
+    obTrailSteps := 0;
+    obSlMoves := 0;
+    obEntryPx := 0;
 
     if (dayStopped = 1) or (Time >= FlatHora) or (boxReady = 0) then
       activeMod := 0
@@ -338,6 +409,10 @@ begin
         tradesOB := tradesOB + 1;
         tradesToday := tradesToday + 1;
         lockedMod := 1;
+        obEntryPx := entry;
+        obBeDone := 0;
+        obTrailSteps := 0;
+        obSlMoves := 0;
       end
       else if (Close < boxL - buf) then
       begin
@@ -348,6 +423,10 @@ begin
         tradesOB := tradesOB + 1;
         tradesToday := tradesToday + 1;
         lockedMod := 1;
+        obEntryPx := entry;
+        obBeDone := 0;
+        obTrailSteps := 0;
+        obSlMoves := 0;
       end;
     end
     else if ((obAborted = 1) or (EnableOpenBreak = 0) or (r2Day = 1) or (tradesOB > 0))

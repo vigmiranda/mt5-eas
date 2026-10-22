@@ -1,8 +1,8 @@
-# RegimeRouterWDO — legenda (Profit Pro / Genial) v1.05 + viz 1.01
+# RegimeRouterWDO — legenda (Profit Pro / Genial) v1.07 + viz 1.02
 
 Plataforma: **Profit Pro** · Corretora: **Genial (sim)** · Ativo: **WDO** · TF: **M5**  
 Arquivos:
-- [`RegimeRouterWDO_v1.ntsl`](RegimeRouterWDO_v1.ntsl) — **execução** (Automação) v1.06 — `ConsoleLog` na aba **Eventos**
+- [`RegimeRouterWDO_v1.ntsl`](RegimeRouterWDO_v1.ntsl) — **execução** (Automação) v1.07 — `ConsoleLog` + OB BE/trail
 - [`RegimeRouterWDO_viz.ntsl`](RegimeRouterWDO_viz.ntsl) — **só visual** (Regra de Coloração) v1.02
 
 ---
@@ -35,11 +35,11 @@ OB → AB → OF → PB → NY → CB → IB → RD → LF → VF
 
 Profit **não tem** Experts. Para analisar o dia use **os três** juntos:
 
-1. **Automação** = `RegimeRouterWDO` v1.06 — aba **Eventos** com linhas `RR …` (`ConsoleLog`, a cada M5).  
+1. **Automação** = `RegimeRouterWDO` v1.07 — aba **Eventos** com linhas `RR …` (`ConsoleLog`, a cada M5).  
 2. Gráfico: **Regra de Coloração** = `RegimeRouterWDO_viz` — cor + texto no candle.  
 3. **Resumo**: Op Totais / Res. Dia.  
 
-### ConsoleLog (Eventos) — v1.06
+### ConsoleLog (Eventos) — v1.07
 
 | Prefixo | Quando |
 |---------|--------|
@@ -48,6 +48,19 @@ Profit **não tem** Experts. Para analisar o dia use **os três** juntos:
 | `RR … \| LOCK mod=…` | Posição aberta |
 | `RR … \| STOP \| …` | STOP DIA |
 | `RR ! ENTRADA mod=…` | Acabou de travar um módulo |
+| `RR ! OB BE SL@…` | OpenBreak: stop no break-even |
+| `RR ! OB TRAIL slMoves=… tpAdv=…` | OpenBreak: trail SL; TP +1 a cada 2 SL |
+
+### OB gestão (v1.07) — só módulo 1
+
+| Input | Default | Papel |
+|-------|---------|-------|
+| `OB_EnableTrail` | 1 | Liga BE+trail no OB |
+| `OB_BE_Pts` | 25 | Pts a favor → SL na entrada |
+| `OB_TrailStepPts` | 10 | Passo de trail do SL (e do TP quando avança) |
+| `OB_TP_MaxPts` | 100 | Teto do TP em pts a partir da entrada |
+
+Fluxo: BE conta como 1ª subida do SL → depois cada passo de trail. **TP só avança 1 passo a cada 2 subidas do SL.** Demais módulos (AB…VF) seguem SL/TP fixos.
 
 `mod` 1–10 = OB…VF (mesma tabela). Se o Editor não compilar `ConsoleLog`, o Profit é antigo demais — atualize o app ou desligue `EnableConsoleLog`.
 
