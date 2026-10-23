@@ -70,7 +70,8 @@ A Clear (B3) muitas vezes **não reporta** equity/balance confiável no MT5. Por
 
 | Ativo | Timeframe | EA | Magic | Versão | Papel |
 |-------|-----------|----|-------|--------|-------|
-| XAUUSD | **M15** | **RegimeRouterXAU_v1** | 320932 | 1.00 | **Único EA ativo Nomo (roteador)** |
+| XAUUSD | **M15** | **RegimeRouterXAU_v1** | 320932 | 1.00 | Roteador — **opera** |
+| ETHUSD | **M15** (ou M5) | **TrendAdvisorETH_v1** | 330933 | 1.00 | Advisor — **só analisa** (não abre ordem) |
 
 Demais EAs Nomo (ScalpXAU, Pattern, Trend*, Grid BTC, etc.) estão em [`eas/nomo/archive/`](eas/nomo/archive/) — **não usar no real**.
 
@@ -81,7 +82,18 @@ Demais EAs Nomo (ScalpXAU, Pattern, Trend*, Grid BTC, etc.) estão em [`eas/nomo
 - Logs `Router: M15 …` a cada barra + telinha com regime/módulo/porque
 - Magic **320932**
 
-**Instalação:** remova ScalpXAU/Pattern/etc. → `eas/nomo/RegimeRouterXAU_v1.mq5` → F7 → gráfico **XAUUSD M15**. Log: `RegimeRouterXAU v1.00`.
+**TrendAdvisorETH_v1** — ETH 24x7, **zero ordens**
+- Default **M15** (`InpTF`; pode ser **M5**)
+- Tendência: EMA20/50 + ADX≥20 → ALTA / BAIXA / LATERAL
+- **SINAL COMPRA/VENDA** só com pullback conveniente na EMA rápida + candle a favor
+- Sem setup: `PARECER: tendência de … — aguarde` (1 log por barra, prefixo `TA`)
+- Telinha no gráfico · magic **330933** (identificação; não opera)
+
+**Instalação**
+1. Arquivo: só use os EAs da tabela acima (resto em `archive/`)
+2. XAU: `RegimeRouterXAU_v1.mq5` → F7 → **XAUUSD M15**
+3. ETH: `TrendAdvisorETH_v1.mq5` → F7 → **ETHUSD M15** (Algotrading pode ficar off — ele não envia ordem)
+4. Logs: `RegimeRouterXAU v1.00` · `TrendAdvisorETH v1.00` / `TA !` (sinal) / `TA ..` (aguarde)
 
 ---
 
@@ -127,7 +139,8 @@ eas/
     RegimeRouterWIN_v1.mq5   # Clear / MT5 / WIN (ativo)
     archive/
   nomo/
-    RegimeRouterXAU_v1.mq5   # Nomo / MT5 / XAU (ativo)
+    RegimeRouterXAU_v1.mq5   # Nomo / XAU (opera)
+    TrendAdvisorETH_v1.mq5   # Nomo / ETH (só analisa)
     archive/
   genial/
     RegimeRouterWDO_v1.ntsl   # execução (Automação)
