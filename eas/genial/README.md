@@ -5,14 +5,14 @@ Conta **simulação** Genial · **Profit Pro** · **WDO** M5 · teste ~**1 mês*
 
 | Arquivo | Uso |
 |---------|-----|
-| [`RegimeRouterWDO_v1.ntsl`](RegimeRouterWDO_v1.ntsl) | **Execução** — Automação (**v1.09** + VF≥10:00 em R2 + sizing + OB BE/trail + `ConsoleLog`) |
+| [`RegimeRouterWDO_v1.ntsl`](RegimeRouterWDO_v1.ntsl) | **Execução** — Automação (**v1.10** + VF SL piso + VF≥10:00 R2 + sizing + `ConsoleLog`) |
 | [`RegimeRouterWDO_viz.ntsl`](RegimeRouterWDO_viz.ntsl) | **Só visual** v1.02 — cor + PlotText no candle (sem ordens) |
 | [`RegimeRouterWDO_LOG.md`](RegimeRouterWDO_LOG.md) | Legenda mod/st + cores |
 | [`RegimeRouterWDO_smoke.ntsl`](RegimeRouterWDO_smoke.ntsl) | Smoke se o editor falhar |
 
 ---
 
-## Cascata v1.09 (10 módulos, flags ON)
+## Cascata v1.10 (10 módulos, flags ON)
 
 ```
 OB → AB → OF → PB → NY → CB → IB → RD → LF → VF
@@ -42,7 +42,7 @@ Sem preço médio. Desligue no input o que for mal (**uma flag por vez**).
 
 Profit não tem log tipo MT5. Para **analisar** o dia:
 
-1. Automação = **`RegimeRouterWDO` v1.09** — aba **Eventos** recebe `ConsoleLog` (`RR …` a cada M5, tipo Experts). OB: BE+trail; VF em R2 só ≥10:00; sizing por `SeedCapital`. Se der erro de sintaxe em `ConsoleLog`, Profit antigo: atualize ou `EnableConsoleLog=0`.  
+1. Automação = **`RegimeRouterWDO` v1.10** — aba **Eventos** recebe `ConsoleLog` (`RR …` a cada M5). OB: BE+trail; VF SL com piso ATR; R2 só ≥10:00; sizing por `SeedCapital`. Se der erro de sintaxe em `ConsoleLog`, Profit antigo: atualize ou `EnableConsoleLog=0`.  
 2. Compila **`RegimeRouterWDO_viz`** v1.02 (raw GitHub, texto puro).  
 3. Gráfico WDO M5 → **Inserir Regra de Coloração** → `RegimeRouterWDO_viz`.  
 4. No candle aparece texto (`OB`/`VF`/`R2`/`IDLE`…) + cor.  
@@ -100,7 +100,7 @@ Quando for migrar parte do capital Clear → Genial: `SeedCapital` = valor aloca
 
 ## Checklist do mês
 
-- [ ] Compilou execução `v1.09` + viz  
+- [ ] Compilou execução `v1.10` + viz  
 - [ ] Automação na **sim** · **M5** · máx posição **3** · `SeedCapital` preenchido  
 - [ ] Regra de coloração `RegimeRouterWDO_viz` no gráfico  
 - [ ] STOP + sizing alinhados ao saldo da sim (`SeedCapital`)  

@@ -125,6 +125,11 @@ Fluxo: BE conta como 1ª subida do SL → depois cada passo de trail. **TP só a
 - Em dia R2, VF só se `Time >= VF_R2Start` (padrão **1000** = 10:00)
 - Dia R1 (caixa OK): horário do VF inalterado
 
+## VF SL (v1.10)
+
+- SL = mais longe entre extremo+buffer e piso `max(VF_MinRiskPts, ATR×mult)` (R2: `VF_R2_SL_ATR_Mult`)
+- Só entra se distância à VWAP ≥ risco × `VF_MinRewardRisk`
+
 ---
 
 ## Ticks
