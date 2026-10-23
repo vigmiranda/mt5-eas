@@ -113,6 +113,13 @@ Fluxo: BE conta como 1ª subida do SL → depois cada passo de trail. **TP só a
 - `SeedCapital > 0` → `SeedCapital × StopDiaPct%`  
 - Senão → `StopDiaReais`
 
+## Sizing (v1.08)
+
+- Capital efetivo = `SeedCapital + DailyResult` (NTSL não lê saldo Genial)
+- Faixas: **&lt;R$5k → 1** · **≥R$5k → 2** · **≥R$8k → 3**
+- Eventos: `vol=` no pulse e em `RR ! ENTRADA`
+- Automação: máx posição ≥ `MaxLots` (3)
+
 ---
 
 ## Ticks
