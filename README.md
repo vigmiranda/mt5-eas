@@ -18,11 +18,11 @@ Automação multiplataforma:
 
 | Ativo | Timeframe | EA | Magic | Versão | Papel |
 |-------|-----------|----|-------|--------|-------|
-| WINV26 / WIN$ | M5 | **RegimeRouterWIN_v1** | 260920 | 1.12 | **Único EA ativo (roteador em cascata)** |
+| WINV26 / WIN$ | M5 | **RegimeRouterWIN_v1** | 260920 | 1.13 | **Único EA ativo (roteador em cascata)** |
 
 EAs anteriores (OpenBreak, Pullback, ScalpWIN, TrendWIN) estão em [`eas/clear/archive/`](eas/clear/archive/) — **não usar no real**.
 
-**RegimeRouterWIN_v1** — cascata M5 (v1.12)
+**RegimeRouterWIN_v1** — cascata M5 (v1.13)
 - **A OpenBreak → B Pullback → D ContBreak → E VwapFade → C Preço médio** (flags `InpEnable*`)
 - **CB / VF ligados por padrão** — desligue no input se for mal (`InpEnableContBreak` / `InpEnableVwapFade`)
 - **Lock:** 1 estratégia dona até flat (PM pode abrir pernas)
@@ -30,7 +30,7 @@ EAs anteriores (OpenBreak, Pullback, ScalpWIN, TrendWIN) estão em [`eas/clear/a
 - PB só entra com **sinal de pullback** (senão a cascata tenta CB)
 - CB: rompimento do range manhã (09:00→11:00) com ADX≥22 · VF: fade à VWAP se dist≥150 pts e ADX≤22
 - **R2:** OB off · **PM** bloqueado · **VF liberado só após 10:00** · PB/CB se fit
-- **VF SL (v1.12):** piso **max(200 pts, ATR×1 / R2×1,25)** — nunca stop no ruído da barra; se VWAP não pagar RR≥1, **skip** (não alonga alvo)
+- **Piso SL (v1.13):** VF **e** PB — `max(**200** hardcoded, MinRisk, ATR×1 / R2×1,25)`. Input 80 no gráfico **não** vale. VF: se VWAP não pagar RR≥1 → **skip**
 - **Sizing (v1.10):** por capital virtual — **&lt;R$5k → 1** · **≥R$5k → 2** · **≥R$8k → 3** (teto); `SIZING_FIXED` opcional
 - Arraste no gráfico **WIN M5** (init avisa se chart ≠ `InpTF`) — sem afrouxar MaxBox / ADX / candle PB
 - **Sem meta de lucro** · teto `InpMaxTradesDay` · **STOP DIA 5%** · semente **R$4.538,48** · magic **260920**
@@ -40,8 +40,9 @@ EAs anteriores (OpenBreak, Pullback, ScalpWIN, TrendWIN) estão em [`eas/clear/a
 1. Remova qualquer EA antigo do gráfico WIN (OpenBreak/Pullback/Scalp…)
 2. Copie `eas/clear/RegimeRouterWIN_v1.mq5` → `MQL5/Experts/` → **F7**
 3. Arraste no **WIN M5**, Algotrading ON
-4. Log: `RegimeRouterWIN v1.12` + `RR …` (2 linhas/M5) — ver legenda
+4. Log: `RegimeRouterWIN v1.13` + `SL efetivo≥200` — ver legenda
 5. CB/VF já vêm ON — desligue no input se precisar
+6. Se o gráfico guardar MinRisk=80: o código **ignora** (&lt;200); ainda assim prefira Resetar inputs / colocar 200 manualmente
 
 ### Capital virtual Clear — como funciona
 

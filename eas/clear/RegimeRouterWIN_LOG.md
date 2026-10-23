@@ -10,6 +10,8 @@ Documentação geral do EA: [`README.md`](../../README.md) · regras: [`REGRAS.m
 
 **VF SL (v1.12):** stop = mais longe entre (extremo+buffer) e piso `max(MinRiskPts, ATR×mult)` (R2 usa mult maior). Se distância à VWAP &lt; risco×`MinRewardRisk` → skip `VF RR fraco…`. Init reconta trades do histórico (`trades reconstruidos`).
 
+**Piso SL absoluto (v1.13):** VF **e** PB usam `max(200, input MinRisk, ATR×mult)` — o **200 é hardcoded** (`RR_SL_ABS_FLOOR_PTS`). Input antigo no gráfico (80) **não** reabre stop curto. Em R2 o mult ATR é 1,25. Se risco alargado &gt; MaxRisk → skip. Log: `PB/VF SL piso struct=… floorPts=…`. Init avisa se `MinRisk chart < 200`.
+
 ---
 
 ## Formato a cada barra M5

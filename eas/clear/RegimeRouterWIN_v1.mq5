@@ -14,14 +14,19 @@
 //| v1.10: sizing conservador por capital (todas as estratégias)  |
 //| v1.11: em dia R2, VF só após 10:00 (evita chicote abertura)   |
 //| v1.12: VF SL piso ATR/min risk + RR vs VWAP; reconta trades dia |
+//| v1.13: piso SL absoluto ≥200 pts (VF+PB) — ignora input velho 80 |
 //+------------------------------------------------------------------+
 #property copyright "Vitor / mt5-eas"
-#property version   "1.12"
+#property version   "1.13"
 #property strict
 
 #include <Trade/Trade.mqh>
 
 CTrade trade;
+
+// Piso absoluto de risco (pts). Inputs salvos no gráfico (ex.: 80) NÃO podem
+// ficar abaixo disso — era a causa dos stops de ~130 pts em dia R2.
+#define RR_SL_ABS_FLOOR_PTS 200
 
 enum ENUM_REGIME
 {
@@ -122,8 +127,10 @@ input group "=== Módulo Pullback (R3) ==="
 input double InpPB_RewardRisk     = 2.0;
 input int    InpPB_BufferPts      = 10;
 input int    InpPB_EntryOffsetPts = 5;
-input int    InpPB_MinRiskPts     = 80;
-input int    InpPB_MaxRiskPts     = 500;
+input int    InpPB_MinRiskPts     = 200;      // Piso (código força ≥200 mesmo se chart tiver 80)
+input int    InpPB_MaxRiskPts     = 600;      // Teto após alargar SL por ATR
+input double InpPB_SL_ATR_Mult    = 1.00;     // Piso SL >= ATR × mult
+input double InpPB_R2_SL_ATR_Mult = 1.25;     // Em R2: piso ainda maior
 
 input group "=== Módulo ContBreak (R5 continuação) ==="
 input int    InpCB_RangeEndH      = 11;       // Range manhã até (breakout depois)
@@ -140,10 +147,10 @@ input group "=== Módulo VWAP fade (R6) ==="
 input int    InpVF_MinDistPts     = 150;      // Distância mínima à VWAP de sessão
 input double InpVF_ADXMax         = 22.0;     // Acima disso deixa p/ tendência (PB/CB)
 input int    InpVF_BufferPts      = 30;       // SL além do extremo (estrutura)
-input int    InpVF_MinRiskPts     = 200;      // Piso duro de risco (pts) — anti stop curto
+input int    InpVF_MinRiskPts     = 200;      // Piso (código força ≥200 mesmo se chart tiver 80)
 input double InpVF_SL_ATR_Mult    = 1.00;     // Piso SL >= ATR × mult
 input double InpVF_R2_SL_ATR_Mult = 1.25;     // Em R2: piso ainda maior
-input int    InpVF_MaxRiskPts     = 500;      // Acima disso skip (não alonga infinito)
+input int    InpVF_MaxRiskPts     = 600;      // Acima disso skip (não alonga infinito)
 input double InpVF_MinRewardRisk  = 1.00;     // Distância até VWAP >= risco × este
 input int    InpVF_R2StartH       = 10;       // Em dia R2: VF só a partir desta hora
 input int    InpVF_R2StartM       = 0;
@@ -848,6 +855,42 @@ double SnapPrice(const double price)
    double ts = TickSize();
    if(ts <= 0.0) return price;
    return NormalizeDouble(MathRound(price / ts) * ts, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS));
+}
+
+//+------------------------------------------------------------------+
+// Risco mínimo efetivo: max(input, piso absoluto). Inputs antigos no
+// gráfico (80) não podem reabrir stop de ruído de barra M5.
+double EffectiveMinRiskPts(const int inpMin)
+{
+   double v = (double)inpMin;
+   if(v < (double)RR_SL_ABS_FLOOR_PTS)
+      v = (double)RR_SL_ABS_FLOOR_PTS;
+   return v;
+}
+
+//+------------------------------------------------------------------+
+// Piso de SL em pts = max(minEfetivo, ATR × mult). Em R2 o mult é maior.
+double SlFloorPts(const int inpMin, const double atrMultNormal, const double atrMultR2)
+{
+   double minR = EffectiveMinRiskPts(inpMin);
+   double mult = (g_r2Day ? atrMultR2 : atrMultNormal);
+   if(mult < 0.0) mult = 0.0;
+   double atrFloor = g_atrPts * mult;
+   double floorPts = MathMax(minR, atrFloor);
+   if(floorPts < (double)RR_SL_ABS_FLOOR_PTS)
+      floorPts = (double)RR_SL_ABS_FLOOR_PTS;
+   return floorPts;
+}
+
+//+------------------------------------------------------------------+
+// SL = mais longe do entry entre estrutura (barra) e piso em pts.
+double ApplySlFloor(const int dir, const double entry, const double slStruct, const double floorPts)
+{
+   double slFloor = (dir > 0)
+      ? SnapPrice(entry - PtsToPriceDist(floorPts))
+      : SnapPrice(entry + PtsToPriceDist(floorPts));
+   double sl = (dir > 0) ? MathMin(slStruct, slFloor) : MathMax(slStruct, slFloor);
+   return SnapPrice(sl);
 }
 
 //+------------------------------------------------------------------+
@@ -1803,16 +1846,25 @@ void ModulePullback()
    }
 
    double price = (g_pbDir > 0 ? ask : bid);
-   double sl = (g_pbDir > 0) ? (g_pbLow - InpPB_BufferPts) : (g_pbHigh + InpPB_BufferPts);
+   if(!RefreshIndicators())
+   {
+      LogSkip("Pullback indicadores indisponiveis p/ piso SL");
+      return;
+   }
+   double slStruct = (g_pbDir > 0) ? (g_pbLow - InpPB_BufferPts) : (g_pbHigh + InpPB_BufferPts);
    if(_Point > 0.0 && MathAbs(_Point - 1.0) > 1e-8)
-      sl = (g_pbDir > 0) ? (g_pbLow - InpPB_BufferPts * _Point)
-                         : (g_pbHigh + InpPB_BufferPts * _Point);
-   sl = SnapPrice(sl);
+      slStruct = (g_pbDir > 0) ? (g_pbLow - InpPB_BufferPts * _Point)
+                               : (g_pbHigh + InpPB_BufferPts * _Point);
+   slStruct = SnapPrice(slStruct);
+
+   double floorPts = SlFloorPts(InpPB_MinRiskPts, InpPB_SL_ATR_Mult, InpPB_R2_SL_ATR_Mult);
+   double sl = ApplySlFloor(g_pbDir, price, slStruct, floorPts);
+
    double riskPts = 0.0;
    string riskWhy = "";
-   if(!RiskPtsOk(price, sl, InpPB_MinRiskPts, InpPB_MaxRiskPts, riskPts, riskWhy))
+   if(!RiskPtsOk(price, sl, (int)MathFloor(floorPts + 1e-8), InpPB_MaxRiskPts, riskPts, riskWhy))
    {
-      LogSkip(StringFormat("Pullback %s", riskWhy));
+      LogSkip(StringFormat("Pullback %s (piso≈%.0f)", riskWhy, floorPts));
       // Absurdo (cotação/SL): não consome sinal — tenta de novo
       if(StringFind(riskWhy, "absurdo") >= 0 || StringFind(riskWhy, "<=") >= 0)
          return;
@@ -1829,6 +1881,8 @@ void ModulePullback()
    }
 
    g_pbConsumed = true;
+   LogWhy(StringFormat("PB SL piso struct=%.0f floorPts=%.0f ATR=%.0f → SL=%.0f risk=%.0f",
+                       slStruct, floorPts, g_atrPts, sl, riskPts));
    if(OpenMarket(g_pbDir, sl, tp, "PB"))
    {
       g_tradesPB++;
@@ -1958,22 +2012,11 @@ void ModuleVwapFade()
    double buf = InpVF_BufferPts * (_Point > 0.0 ? _Point : 1.0);
    if(MathAbs(_Point - 1.0) < 1e-8) buf = (double)InpVF_BufferPts;
 
-   // SL estrutural (extremo da barra) — depois aplica PISO (nunca stop curto)
+   // SL estrutural (extremo da barra) + piso absoluto/ATR (nunca stop curto)
    double slStruct = (dir > 0) ? (low1 - buf) : (high1 + buf);
    slStruct = SnapPrice(slStruct);
-
-   double atrFloor = g_atrPts * (g_r2Day ? InpVF_R2_SL_ATR_Mult : InpVF_SL_ATR_Mult);
-   double floorPts = MathMax((double)InpVF_MinRiskPts, atrFloor);
-   if(floorPts < 1.0) floorPts = (double)InpVF_MinRiskPts;
-
-   double slFloor = (dir > 0)
-      ? SnapPrice(entry - PtsToPriceDist(floorPts))
-      : SnapPrice(entry + PtsToPriceDist(floorPts));
-   // Mais longe do entry = stop definitivo (não paliativo de horário)
-   double sl = (dir > 0)
-      ? MathMin(slStruct, slFloor)
-      : MathMax(slStruct, slFloor);
-   sl = SnapPrice(sl);
+   double floorPts = SlFloorPts(InpVF_MinRiskPts, InpVF_SL_ATR_Mult, InpVF_R2_SL_ATR_Mult);
+   double sl = ApplySlFloor(dir, entry, slStruct, floorPts);
 
    double tp = SnapPrice(g_vwap);
    double riskPts = 0.0;
@@ -2227,7 +2270,7 @@ void UpdateChartComment()
       : (g_obAborted ? "OBabort" : "free");
 
    string txt = StringFormat(
-      "RR v1.12 %s | %s %s | %s\n"
+      "RR v1.13 %s | %s %s | %s\n"
       "%s\n"
       "OB%d PB%d CB%d VF%d PM%d | %s | cx=%.0f(%s)\n"
       "ADX%.0f EMA%.0f/%.0f ATR%.0f VWAP%.0f spr%d\n"
@@ -2286,12 +2329,19 @@ int OnInit()
    RebuildDayTradeCounts();
    RefreshIndicators();
 
-   Print("========== RegimeRouterWIN v1.12 ==========");
+   Print("========== RegimeRouterWIN v1.13 ==========");
    Print("RR init | cascata OB>PB>CB>VF>PM | lock flat | sem meta | log curto");
-   Print("RR init | v1.12 VF SL piso ATR/minRisk + RR vs VWAP | reconta trades do dia");
-   PrintFormat("RR init | VF R2 start %02d:%02d | dist>=%d ADX<=%.0f | SL piso %dpts / ATR×%.2f (R2×%.2f) RR>=%.2f",
+   Print("RR init | v1.13 piso SL absoluto ≥200 pts em VF+PB (ignora input chart <200)");
+   if(InpVF_MinRiskPts < RR_SL_ABS_FLOOR_PTS || InpPB_MinRiskPts < RR_SL_ABS_FLOOR_PTS)
+   {
+      PrintFormat("RR init | AVISO MinRisk chart VF=%d PB=%d → efetivo ≥%d (não use 80)",
+                  InpVF_MinRiskPts, InpPB_MinRiskPts, RR_SL_ABS_FLOOR_PTS);
+   }
+   PrintFormat("RR init | VF R2 start %02d:%02d | dist>=%d ADX<=%.0f | SL efetivo≥%d ATR×%.2f (R2×%.2f) RR>=%.2f",
                InpVF_R2StartH, InpVF_R2StartM, InpVF_MinDistPts, InpVF_ADXMax,
-               InpVF_MinRiskPts, InpVF_SL_ATR_Mult, InpVF_R2_SL_ATR_Mult, InpVF_MinRewardRisk);
+               RR_SL_ABS_FLOOR_PTS, InpVF_SL_ATR_Mult, InpVF_R2_SL_ATR_Mult, InpVF_MinRewardRisk);
+   PrintFormat("RR init | PB SL efetivo≥%d ATR×%.2f (R2×%.2f) max=%d",
+               RR_SL_ABS_FLOOR_PTS, InpPB_SL_ATR_Mult, InpPB_R2_SL_ATR_Mult, InpPB_MaxRiskPts);
    PrintFormat("RR init | trades reconstruidos hoje=%d [o%d p%d c%d v%d m%d]",
                g_tradesToday, g_tradesOB, g_tradesPB, g_tradesCB, g_tradesVF, g_tradesMR);
    PrintFormat("RR init | flags OB=%d PB=%d CB=%d VF=%d PM=%d | maxT=%d | STOP=%.0f%% (~R$%.0f)",
