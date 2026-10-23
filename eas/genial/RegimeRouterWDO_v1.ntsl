@@ -1,4 +1,4 @@
-{ RegimeRouterWDO v1.10 - Genial/Profit Pro/WDO M5
+{ RegimeRouterWDO v1.11 - Genial/Profit Pro/WDO M5
   Cascata OB>AB>OF>PB>NY>CB>IB>RD>LF>VF | lock ate flat
   v1.04: VF elegivel em R2 (mesmos criterios); OB/LF off em R2
   v1.05: Plot4(visMod) + cores das linhas
@@ -7,6 +7,7 @@
   v1.08: sizing conservador por SeedCapital (<5k->1 | >=5k->2 | >=8k->3)
   v1.09: em dia R2, VF so apos 10:00 (VF_R2Start)
   v1.10: VF SL piso ATR/min risk + RR vs VWAP (anti stop curto)
+  v1.11: risco/TP dinamicos por SeedCapital + BE/trail em TODOS os modulos
   Cores dos candles: use RegimeRouterWDO_viz (nao inserir ESTE como coloracao)
   Se ConsoleLog der erro de sintaxe: Profit antigo - atualize ou EnableConsoleLog=0 }
 input
@@ -16,6 +17,13 @@ input
   LotBand2Cap(5000.0);
   LotBand3Cap(8000.0);
   MaxLots(3);
+  PointValueBRL(10.0);
+  RiskPctPerTrade(4.0);
+  RiskFracOfStop(0.80);
+  DynRewardRisk(1.50);
+  EnableManageTrail(1);
+  Manage_BE_Pts(8);
+  Manage_TrailStepPts(5);
   StopDiaPct(5.0);
   StopDiaReais(250.0);
   MaxTradesDay(12);
@@ -139,7 +147,8 @@ var
   dayPnL, stopLim, buf, sl, entry, risk, riskPts, distPts, rangePts : Float;
   hh, ll, obEntryPx, favorPts, extraPts, newTpPts, effCap : Float;
   floorPts, rewardPts, slStruct, atrPts : Float;
-  visMod, lastLogTime, prevLocked, orderLots, posLots : Integer;
+  maxRiskBRL, maxRiskPts, maxRewardPts : Float;
+  visMod, lastLogTime, prevLocked, orderLots, posLots, riskArmed : Integer;
 
 begin
   tick := MinPriceIncrement;
@@ -242,6 +251,23 @@ begin
       orderLots := 1;
   end;
 
+  { risco dinamico: max perda por trade em R$ a partir do capital (Seed) }
+  if (SeedCapital > 0) then
+    maxRiskBRL := SeedCapital * RiskPctPerTrade / 100.0
+  else
+    maxRiskBRL := Abs(stopLim) * RiskFracOfStop;
+  if (maxRiskBRL > Abs(stopLim) * RiskFracOfStop) then
+    maxRiskBRL := Abs(stopLim) * RiskFracOfStop;
+  if (maxRiskBRL < 10) then
+    maxRiskBRL := 10;
+  if (PointValueBRL <= 0) then
+    maxRiskPts := 999
+  else
+    maxRiskPts := maxRiskBRL / (PointValueBRL * orderLots);
+  if (maxRiskPts < 5) then
+    maxRiskPts := 5;
+  maxRewardPts := maxRiskPts * DynRewardRisk;
+
   if (dayStopped = 0) and (dayPnL <= (0 - Abs(stopLim))) then
   begin
     dayStopped := 1;
@@ -340,8 +366,8 @@ begin
       lockedMod := activeMod;
     activeMod := lockedMod;
 
-    {--- OB v1.07: BE + trail SL; TP +1 a cada 2 subidas do SL ---}
-    if (lockedMod = 1) and (OB_EnableTrail = 1) then
+    {--- v1.11: BE + trail em TODOS os modulos (evita ficar ate FlatHora sem SL/TP) ---}
+    if (lockedMod > 0) and (EnableManageTrail = 1) then
     begin
       if (obEntryPx <= 0) then
       begin
@@ -358,39 +384,43 @@ begin
         else
           favorPts := (obEntryPx - Close) / tick;
 
-        if (obBeDone = 0) and (favorPts >= OB_BE_Pts) then
+        if (obBeDone = 0) and (favorPts >= Manage_BE_Pts) then
         begin
           entrySL := obEntryPx;
           obBeDone := 1;
           obSlMoves := 1;
           if (EnableConsoleLog = 1) then
-            ConsoleLog("RR ! OB BE SL@" + FloatToString(entrySL, 1) + " fav=" + FloatToString(favorPts, 0), clYellow);
+            ConsoleLog("RR ! BE mod=" + FloatToString(lockedMod, 0) + " SL@" + FloatToString(entrySL, 1) + " fav=" + FloatToString(favorPts, 0), clYellow);
         end;
 
-        if (obBeDone = 1) and (OB_TrailStepPts > 0) then
+        if (obBeDone = 1) and (Manage_TrailStepPts > 0) then
         begin
-          extraPts := favorPts - OB_BE_Pts;
+          extraPts := favorPts - Manage_BE_Pts;
           if (extraPts < 0) then
             extraPts := 0;
-          wantTrail := extraPts / OB_TrailStepPts;
+          wantTrail := extraPts / Manage_TrailStepPts;
           if (wantTrail > obTrailSteps) then
           begin
             obTrailSteps := wantTrail;
             if IsBought then
-              entrySL := obEntryPx + obTrailSteps * OB_TrailStepPts * tick
+              entrySL := obEntryPx + obTrailSteps * Manage_TrailStepPts * tick
             else
-              entrySL := obEntryPx - obTrailSteps * OB_TrailStepPts * tick;
+              entrySL := obEntryPx - obTrailSteps * Manage_TrailStepPts * tick;
             obSlMoves := 1 + obTrailSteps;
-            tpAdv := obSlMoves / 2;
-            newTpPts := OB_GainPts + tpAdv * OB_TrailStepPts;
-            if (newTpPts > OB_TP_MaxPts) then
-              newTpPts := OB_TP_MaxPts;
-            if IsBought then
-              entryTP := obEntryPx + newTpPts * tick
-            else
-              entryTP := obEntryPx - newTpPts * tick;
+            { OB: ainda avanca TP; demais: so trilha SL (protege lucro antes do flat) }
+            if (lockedMod = 1) and (OB_EnableTrail = 1) then
+            begin
+              tpAdv := obSlMoves / 2;
+              newTpPts := OB_GainPts + tpAdv * Manage_TrailStepPts;
+              if (newTpPts > OB_TP_MaxPts) then
+                newTpPts := OB_TP_MaxPts;
+              if IsBought then
+                entryTP := obEntryPx + newTpPts * tick
+              else
+                entryTP := obEntryPx - newTpPts * tick;
+            end;
             if (EnableConsoleLog = 1) then
-              ConsoleLog("RR ! OB TRAIL slMoves=" + FloatToString(obSlMoves, 0) + " tpAdv=" + FloatToString(tpAdv, 0) + " SL@" + FloatToString(entrySL, 1) + " TP@" + FloatToString(entryTP, 1), clYellow);
+              ConsoleLog("RR ! TRAIL mod=" + FloatToString(lockedMod, 0) + " steps=" + FloatToString(obTrailSteps, 0) + " SL@" + FloatToString(entrySL, 1), clYellow);
           end;
         end;
       end;
@@ -442,30 +472,64 @@ begin
         entry := Close;
         entrySL := entry - OB_StopPts * tick;
         entryTP := entry + OB_GainPts * tick;
-        posLots := orderLots;
-        BuyAtMarket(orderLots);
-        tradesOB := tradesOB + 1;
-        tradesToday := tradesToday + 1;
-        lockedMod := 1;
-        obEntryPx := entry;
-        obBeDone := 0;
-        obTrailSteps := 0;
-        obSlMoves := 0;
+        riskPts := Abs(entry - entrySL) / tick;
+        rewardPts := Abs(entry - entryTP) / tick;
+        riskArmed := 0;
+        if (riskPts > 0) and (riskPts <= maxRiskPts) then
+        begin
+          if (rewardPts > maxRewardPts) then
+          begin
+            entryTP := entry + maxRewardPts * tick;
+            rewardPts := maxRewardPts;
+          end;
+          riskArmed := 1;
+        end
+        else if (EnableConsoleLog = 1) then
+          ConsoleLog("RR .. SKIP risco " + FloatToString(riskPts, 0) + " > max " + FloatToString(maxRiskPts, 0) + " pts (cap)", clOlive);
+        if (riskArmed = 1) then
+        begin
+          posLots := orderLots;
+          obEntryPx := entry;
+          obBeDone := 0;
+          obTrailSteps := 0;
+          obSlMoves := 0;
+          BuyAtMarket(orderLots);
+          tradesOB := tradesOB + 1;
+          tradesToday := tradesToday + 1;
+          lockedMod := 1;
+          end;
       end
       else if (Close < boxL - buf) then
       begin
         entry := Close;
         entrySL := entry + OB_StopPts * tick;
         entryTP := entry - OB_GainPts * tick;
-        posLots := orderLots;
-        SellShortAtMarket(orderLots);
-        tradesOB := tradesOB + 1;
-        tradesToday := tradesToday + 1;
-        lockedMod := 1;
-        obEntryPx := entry;
-        obBeDone := 0;
-        obTrailSteps := 0;
-        obSlMoves := 0;
+        riskPts := Abs(entry - entrySL) / tick;
+        rewardPts := Abs(entry - entryTP) / tick;
+        riskArmed := 0;
+        if (riskPts > 0) and (riskPts <= maxRiskPts) then
+        begin
+          if (rewardPts > maxRewardPts) then
+          begin
+            entryTP := entry - maxRewardPts * tick;
+            rewardPts := maxRewardPts;
+          end;
+          riskArmed := 1;
+        end
+        else if (EnableConsoleLog = 1) then
+          ConsoleLog("RR .. SKIP risco " + FloatToString(riskPts, 0) + " > max " + FloatToString(maxRiskPts, 0) + " pts (cap)", clOlive);
+        if (riskArmed = 1) then
+        begin
+          posLots := orderLots;
+          obEntryPx := entry;
+          obBeDone := 0;
+          obTrailSteps := 0;
+          obSlMoves := 0;
+          SellShortAtMarket(orderLots);
+          tradesOB := tradesOB + 1;
+          tradesToday := tradesToday + 1;
+          lockedMod := 1;
+          end;
       end;
     end
     else if ((obAborted = 1) or (EnableOpenBreak = 0) or (r2Day = 1) or (tradesOB > 0))
@@ -483,22 +547,64 @@ begin
           entry := Close;
           entrySL := entry - AB_StopPts * tick;
           entryTP := entry + AB_GainPts * tick;
-          posLots := orderLots;
-        BuyAtMarket(orderLots);
-          tradesAB := tradesAB + 1;
-          tradesToday := tradesToday + 1;
-          lockedMod := 2;
+          riskPts := Abs(entry - entrySL) / tick;
+          rewardPts := Abs(entry - entryTP) / tick;
+          riskArmed := 0;
+          if (riskPts > 0) and (riskPts <= maxRiskPts) then
+          begin
+            if (rewardPts > maxRewardPts) then
+            begin
+            entryTP := entry + maxRewardPts * tick;
+              rewardPts := maxRewardPts;
+            end;
+            riskArmed := 1;
+          end
+          else if (EnableConsoleLog = 1) then
+            ConsoleLog("RR .. SKIP risco " + FloatToString(riskPts, 0) + " > max " + FloatToString(maxRiskPts, 0) + " pts (cap)", clOlive);
+          if (riskArmed = 1) then
+          begin
+            posLots := orderLots;
+            obEntryPx := entry;
+            obBeDone := 0;
+            obTrailSteps := 0;
+            obSlMoves := 0;
+            BuyAtMarket(orderLots);
+            tradesAB := tradesAB + 1;
+            tradesToday := tradesToday + 1;
+            lockedMod := 2;
+            end;
         end
         else if (Close < prevL - buf) then
         begin
           entry := Close;
           entrySL := entry + AB_StopPts * tick;
           entryTP := entry - AB_GainPts * tick;
-          posLots := orderLots;
-        SellShortAtMarket(orderLots);
-          tradesAB := tradesAB + 1;
-          tradesToday := tradesToday + 1;
-          lockedMod := 2;
+          riskPts := Abs(entry - entrySL) / tick;
+          rewardPts := Abs(entry - entryTP) / tick;
+          riskArmed := 0;
+          if (riskPts > 0) and (riskPts <= maxRiskPts) then
+          begin
+            if (rewardPts > maxRewardPts) then
+            begin
+            entryTP := entry - maxRewardPts * tick;
+              rewardPts := maxRewardPts;
+            end;
+            riskArmed := 1;
+          end
+          else if (EnableConsoleLog = 1) then
+            ConsoleLog("RR .. SKIP risco " + FloatToString(riskPts, 0) + " > max " + FloatToString(maxRiskPts, 0) + " pts (cap)", clOlive);
+          if (riskArmed = 1) then
+          begin
+            posLots := orderLots;
+            obEntryPx := entry;
+            obBeDone := 0;
+            obTrailSteps := 0;
+            obSlMoves := 0;
+            SellShortAtMarket(orderLots);
+            tradesAB := tradesAB + 1;
+            tradesToday := tradesToday + 1;
+            lockedMod := 2;
+            end;
         end;
       end
       {--- 3 OF ---}
@@ -524,11 +630,32 @@ begin
             begin
               entrySL := sl;
               entryTP := mid;
-              posLots := orderLots;
-        SellShortAtMarket(orderLots);
-              tradesOF := tradesOF + 1;
-              tradesToday := tradesToday + 1;
-              lockedMod := 3;
+              riskPts := Abs(entry - entrySL) / tick;
+              rewardPts := Abs(entry - entryTP) / tick;
+              riskArmed := 0;
+              if (riskPts > 0) and (riskPts <= maxRiskPts) then
+              begin
+                if (rewardPts > maxRewardPts) then
+                begin
+            entryTP := entry - maxRewardPts * tick;
+                  rewardPts := maxRewardPts;
+                end;
+                riskArmed := 1;
+              end
+              else if (EnableConsoleLog = 1) then
+                ConsoleLog("RR .. SKIP risco " + FloatToString(riskPts, 0) + " > max " + FloatToString(maxRiskPts, 0) + " pts (cap)", clOlive);
+              if (riskArmed = 1) then
+              begin
+                posLots := orderLots;
+                obEntryPx := entry;
+                obBeDone := 0;
+                obTrailSteps := 0;
+                obSlMoves := 0;
+                SellShortAtMarket(orderLots);
+                tradesOF := tradesOF + 1;
+                tradesToday := tradesToday + 1;
+                lockedMod := 3;
+                end;
             end;
           end
           else if (Close < mid) and (Close[1] < Open[1]) and (Close > Low[1]) then
@@ -541,11 +668,32 @@ begin
             begin
               entrySL := sl;
               entryTP := mid;
-              posLots := orderLots;
-        BuyAtMarket(orderLots);
-              tradesOF := tradesOF + 1;
-              tradesToday := tradesToday + 1;
-              lockedMod := 3;
+              riskPts := Abs(entry - entrySL) / tick;
+              rewardPts := Abs(entry - entryTP) / tick;
+              riskArmed := 0;
+              if (riskPts > 0) and (riskPts <= maxRiskPts) then
+              begin
+                if (rewardPts > maxRewardPts) then
+                begin
+            entryTP := entry + maxRewardPts * tick;
+                  rewardPts := maxRewardPts;
+                end;
+                riskArmed := 1;
+              end
+              else if (EnableConsoleLog = 1) then
+                ConsoleLog("RR .. SKIP risco " + FloatToString(riskPts, 0) + " > max " + FloatToString(maxRiskPts, 0) + " pts (cap)", clOlive);
+              if (riskArmed = 1) then
+              begin
+                posLots := orderLots;
+                obEntryPx := entry;
+                obBeDone := 0;
+                obTrailSteps := 0;
+                obSlMoves := 0;
+                BuyAtMarket(orderLots);
+                tradesOF := tradesOF + 1;
+                tradesToday := tradesToday + 1;
+                lockedMod := 3;
+                end;
             end;
           end;
         end;
@@ -574,11 +722,32 @@ begin
             begin
               entrySL := sl;
               entryTP := entry + PB_RewardRisk * risk;
-              posLots := orderLots;
-        BuyAtMarket(orderLots);
-              tradesPB := tradesPB + 1;
-              tradesToday := tradesToday + 1;
-              lockedMod := 4;
+              riskPts := Abs(entry - entrySL) / tick;
+              rewardPts := Abs(entry - entryTP) / tick;
+              riskArmed := 0;
+              if (riskPts > 0) and (riskPts <= maxRiskPts) then
+              begin
+                if (rewardPts > maxRewardPts) then
+                begin
+            entryTP := entry + maxRewardPts * tick;
+                  rewardPts := maxRewardPts;
+                end;
+                riskArmed := 1;
+              end
+              else if (EnableConsoleLog = 1) then
+                ConsoleLog("RR .. SKIP risco " + FloatToString(riskPts, 0) + " > max " + FloatToString(maxRiskPts, 0) + " pts (cap)", clOlive);
+              if (riskArmed = 1) then
+              begin
+                posLots := orderLots;
+                obEntryPx := entry;
+                obBeDone := 0;
+                obTrailSteps := 0;
+                obSlMoves := 0;
+                BuyAtMarket(orderLots);
+                tradesPB := tradesPB + 1;
+                tradesToday := tradesToday + 1;
+                lockedMod := 4;
+                end;
             end;
           end
           else if (pbDirI = -1) and (Close <= Low[1] - buf) then
@@ -591,11 +760,32 @@ begin
             begin
               entrySL := sl;
               entryTP := entry - PB_RewardRisk * risk;
-              posLots := orderLots;
-        SellShortAtMarket(orderLots);
-              tradesPB := tradesPB + 1;
-              tradesToday := tradesToday + 1;
-              lockedMod := 4;
+              riskPts := Abs(entry - entrySL) / tick;
+              rewardPts := Abs(entry - entryTP) / tick;
+              riskArmed := 0;
+              if (riskPts > 0) and (riskPts <= maxRiskPts) then
+              begin
+                if (rewardPts > maxRewardPts) then
+                begin
+            entryTP := entry - maxRewardPts * tick;
+                  rewardPts := maxRewardPts;
+                end;
+                riskArmed := 1;
+              end
+              else if (EnableConsoleLog = 1) then
+                ConsoleLog("RR .. SKIP risco " + FloatToString(riskPts, 0) + " > max " + FloatToString(maxRiskPts, 0) + " pts (cap)", clOlive);
+              if (riskArmed = 1) then
+              begin
+                posLots := orderLots;
+                obEntryPx := entry;
+                obBeDone := 0;
+                obTrailSteps := 0;
+                obSlMoves := 0;
+                SellShortAtMarket(orderLots);
+                tradesPB := tradesPB + 1;
+                tradesToday := tradesToday + 1;
+                lockedMod := 4;
+                end;
             end;
           end;
         end
@@ -616,22 +806,64 @@ begin
           entry := Close;
           entrySL := entry - NY_StopPts * tick;
           entryTP := entry + NY_GainPts * tick;
-          posLots := orderLots;
-        BuyAtMarket(orderLots);
-          tradesNY := tradesNY + 1;
-          tradesToday := tradesToday + 1;
-          lockedMod := 5;
+          riskPts := Abs(entry - entrySL) / tick;
+          rewardPts := Abs(entry - entryTP) / tick;
+          riskArmed := 0;
+          if (riskPts > 0) and (riskPts <= maxRiskPts) then
+          begin
+            if (rewardPts > maxRewardPts) then
+            begin
+            entryTP := entry + maxRewardPts * tick;
+              rewardPts := maxRewardPts;
+            end;
+            riskArmed := 1;
+          end
+          else if (EnableConsoleLog = 1) then
+            ConsoleLog("RR .. SKIP risco " + FloatToString(riskPts, 0) + " > max " + FloatToString(maxRiskPts, 0) + " pts (cap)", clOlive);
+          if (riskArmed = 1) then
+          begin
+            posLots := orderLots;
+            obEntryPx := entry;
+            obBeDone := 0;
+            obTrailSteps := 0;
+            obSlMoves := 0;
+            BuyAtMarket(orderLots);
+            tradesNY := tradesNY + 1;
+            tradesToday := tradesToday + 1;
+            lockedMod := 5;
+            end;
         end
         else if (adxV >= NY_ADXBreak) and (Close < nyL - buf) then
         begin
           entry := Close;
           entrySL := entry + NY_StopPts * tick;
           entryTP := entry - NY_GainPts * tick;
-          posLots := orderLots;
-        SellShortAtMarket(orderLots);
-          tradesNY := tradesNY + 1;
-          tradesToday := tradesToday + 1;
-          lockedMod := 5;
+          riskPts := Abs(entry - entrySL) / tick;
+          rewardPts := Abs(entry - entryTP) / tick;
+          riskArmed := 0;
+          if (riskPts > 0) and (riskPts <= maxRiskPts) then
+          begin
+            if (rewardPts > maxRewardPts) then
+            begin
+            entryTP := entry - maxRewardPts * tick;
+              rewardPts := maxRewardPts;
+            end;
+            riskArmed := 1;
+          end
+          else if (EnableConsoleLog = 1) then
+            ConsoleLog("RR .. SKIP risco " + FloatToString(riskPts, 0) + " > max " + FloatToString(maxRiskPts, 0) + " pts (cap)", clOlive);
+          if (riskArmed = 1) then
+          begin
+            posLots := orderLots;
+            obEntryPx := entry;
+            obBeDone := 0;
+            obTrailSteps := 0;
+            obSlMoves := 0;
+            SellShortAtMarket(orderLots);
+            tradesNY := tradesNY + 1;
+            tradesToday := tradesToday + 1;
+            lockedMod := 5;
+            end;
         end
         else if (adxV < NY_ADXBreak) and (distPts >= NY_FadeMinPts) then
         begin
@@ -645,11 +877,32 @@ begin
             begin
               entrySL := sl;
               entryTP := mid;
-              posLots := orderLots;
-        SellShortAtMarket(orderLots);
-              tradesNY := tradesNY + 1;
-              tradesToday := tradesToday + 1;
-              lockedMod := 5;
+              riskPts := Abs(entry - entrySL) / tick;
+              rewardPts := Abs(entry - entryTP) / tick;
+              riskArmed := 0;
+              if (riskPts > 0) and (riskPts <= maxRiskPts) then
+              begin
+                if (rewardPts > maxRewardPts) then
+                begin
+            entryTP := entry - maxRewardPts * tick;
+                  rewardPts := maxRewardPts;
+                end;
+                riskArmed := 1;
+              end
+              else if (EnableConsoleLog = 1) then
+                ConsoleLog("RR .. SKIP risco " + FloatToString(riskPts, 0) + " > max " + FloatToString(maxRiskPts, 0) + " pts (cap)", clOlive);
+              if (riskArmed = 1) then
+              begin
+                posLots := orderLots;
+                obEntryPx := entry;
+                obBeDone := 0;
+                obTrailSteps := 0;
+                obSlMoves := 0;
+                SellShortAtMarket(orderLots);
+                tradesNY := tradesNY + 1;
+                tradesToday := tradesToday + 1;
+                lockedMod := 5;
+                end;
             end;
           end
           else if (Close < nyL) then
@@ -662,11 +915,32 @@ begin
             begin
               entrySL := sl;
               entryTP := mid;
-              posLots := orderLots;
-        BuyAtMarket(orderLots);
-              tradesNY := tradesNY + 1;
-              tradesToday := tradesToday + 1;
-              lockedMod := 5;
+              riskPts := Abs(entry - entrySL) / tick;
+              rewardPts := Abs(entry - entryTP) / tick;
+              riskArmed := 0;
+              if (riskPts > 0) and (riskPts <= maxRiskPts) then
+              begin
+                if (rewardPts > maxRewardPts) then
+                begin
+            entryTP := entry + maxRewardPts * tick;
+                  rewardPts := maxRewardPts;
+                end;
+                riskArmed := 1;
+              end
+              else if (EnableConsoleLog = 1) then
+                ConsoleLog("RR .. SKIP risco " + FloatToString(riskPts, 0) + " > max " + FloatToString(maxRiskPts, 0) + " pts (cap)", clOlive);
+              if (riskArmed = 1) then
+              begin
+                posLots := orderLots;
+                obEntryPx := entry;
+                obBeDone := 0;
+                obTrailSteps := 0;
+                obSlMoves := 0;
+                BuyAtMarket(orderLots);
+                tradesNY := tradesNY + 1;
+                tradesToday := tradesToday + 1;
+                lockedMod := 5;
+                end;
             end;
           end;
         end;
@@ -688,11 +962,32 @@ begin
           begin
             entrySL := sl;
             entryTP := entry + CB_RewardRisk * risk;
-            posLots := orderLots;
-        BuyAtMarket(orderLots);
-            tradesCB := tradesCB + 1;
-            tradesToday := tradesToday + 1;
-            lockedMod := 6;
+            riskPts := Abs(entry - entrySL) / tick;
+            rewardPts := Abs(entry - entryTP) / tick;
+            riskArmed := 0;
+            if (riskPts > 0) and (riskPts <= maxRiskPts) then
+            begin
+              if (rewardPts > maxRewardPts) then
+              begin
+            entryTP := entry + maxRewardPts * tick;
+                rewardPts := maxRewardPts;
+              end;
+              riskArmed := 1;
+            end
+            else if (EnableConsoleLog = 1) then
+              ConsoleLog("RR .. SKIP risco " + FloatToString(riskPts, 0) + " > max " + FloatToString(maxRiskPts, 0) + " pts (cap)", clOlive);
+            if (riskArmed = 1) then
+            begin
+              posLots := orderLots;
+              obEntryPx := entry;
+              obBeDone := 0;
+              obTrailSteps := 0;
+              obSlMoves := 0;
+              BuyAtMarket(orderLots);
+              tradesCB := tradesCB + 1;
+              tradesToday := tradesToday + 1;
+              lockedMod := 6;
+              end;
           end;
         end
         else if (emaF < emaS) and (Close < emaF) and (Close < amL - buf) then
@@ -705,11 +1000,32 @@ begin
           begin
             entrySL := sl;
             entryTP := entry - CB_RewardRisk * risk;
-            posLots := orderLots;
-        SellShortAtMarket(orderLots);
-            tradesCB := tradesCB + 1;
-            tradesToday := tradesToday + 1;
-            lockedMod := 6;
+            riskPts := Abs(entry - entrySL) / tick;
+            rewardPts := Abs(entry - entryTP) / tick;
+            riskArmed := 0;
+            if (riskPts > 0) and (riskPts <= maxRiskPts) then
+            begin
+              if (rewardPts > maxRewardPts) then
+              begin
+            entryTP := entry - maxRewardPts * tick;
+                rewardPts := maxRewardPts;
+              end;
+              riskArmed := 1;
+            end
+            else if (EnableConsoleLog = 1) then
+              ConsoleLog("RR .. SKIP risco " + FloatToString(riskPts, 0) + " > max " + FloatToString(maxRiskPts, 0) + " pts (cap)", clOlive);
+            if (riskArmed = 1) then
+            begin
+              posLots := orderLots;
+              obEntryPx := entry;
+              obBeDone := 0;
+              obTrailSteps := 0;
+              obSlMoves := 0;
+              SellShortAtMarket(orderLots);
+              tradesCB := tradesCB + 1;
+              tradesToday := tradesToday + 1;
+              lockedMod := 6;
+              end;
           end;
         end;
       end
@@ -728,22 +1044,64 @@ begin
           entry := Close;
           entrySL := entry - IB_StopPts * tick;
           entryTP := entry + IB_GainPts * tick;
-          posLots := orderLots;
-        BuyAtMarket(orderLots);
-          tradesIB := tradesIB + 1;
-          tradesToday := tradesToday + 1;
-          lockedMod := 7;
+          riskPts := Abs(entry - entrySL) / tick;
+          rewardPts := Abs(entry - entryTP) / tick;
+          riskArmed := 0;
+          if (riskPts > 0) and (riskPts <= maxRiskPts) then
+          begin
+            if (rewardPts > maxRewardPts) then
+            begin
+            entryTP := entry + maxRewardPts * tick;
+              rewardPts := maxRewardPts;
+            end;
+            riskArmed := 1;
+          end
+          else if (EnableConsoleLog = 1) then
+            ConsoleLog("RR .. SKIP risco " + FloatToString(riskPts, 0) + " > max " + FloatToString(maxRiskPts, 0) + " pts (cap)", clOlive);
+          if (riskArmed = 1) then
+          begin
+            posLots := orderLots;
+            obEntryPx := entry;
+            obBeDone := 0;
+            obTrailSteps := 0;
+            obSlMoves := 0;
+            BuyAtMarket(orderLots);
+            tradesIB := tradesIB + 1;
+            tradesToday := tradesToday + 1;
+            lockedMod := 7;
+            end;
         end
         else if (Close < ll - buf) then
         begin
           entry := Close;
           entrySL := entry + IB_StopPts * tick;
           entryTP := entry - IB_GainPts * tick;
-          posLots := orderLots;
-        SellShortAtMarket(orderLots);
-          tradesIB := tradesIB + 1;
-          tradesToday := tradesToday + 1;
-          lockedMod := 7;
+          riskPts := Abs(entry - entrySL) / tick;
+          rewardPts := Abs(entry - entryTP) / tick;
+          riskArmed := 0;
+          if (riskPts > 0) and (riskPts <= maxRiskPts) then
+          begin
+            if (rewardPts > maxRewardPts) then
+            begin
+            entryTP := entry - maxRewardPts * tick;
+              rewardPts := maxRewardPts;
+            end;
+            riskArmed := 1;
+          end
+          else if (EnableConsoleLog = 1) then
+            ConsoleLog("RR .. SKIP risco " + FloatToString(riskPts, 0) + " > max " + FloatToString(maxRiskPts, 0) + " pts (cap)", clOlive);
+          if (riskArmed = 1) then
+          begin
+            posLots := orderLots;
+            obEntryPx := entry;
+            obBeDone := 0;
+            obTrailSteps := 0;
+            obSlMoves := 0;
+            SellShortAtMarket(orderLots);
+            tradesIB := tradesIB + 1;
+            tradesToday := tradesToday + 1;
+            lockedMod := 7;
+            end;
         end;
       end
       {--- 8 RD ---}
@@ -766,11 +1124,32 @@ begin
             begin
               entrySL := sl;
               entryTP := entry + RD_RewardRisk * risk;
-              posLots := orderLots;
-        BuyAtMarket(orderLots);
-              tradesRD := tradesRD + 1;
-              tradesToday := tradesToday + 1;
-              lockedMod := 8;
+              riskPts := Abs(entry - entrySL) / tick;
+              rewardPts := Abs(entry - entryTP) / tick;
+              riskArmed := 0;
+              if (riskPts > 0) and (riskPts <= maxRiskPts) then
+              begin
+                if (rewardPts > maxRewardPts) then
+                begin
+            entryTP := entry + maxRewardPts * tick;
+                  rewardPts := maxRewardPts;
+                end;
+                riskArmed := 1;
+              end
+              else if (EnableConsoleLog = 1) then
+                ConsoleLog("RR .. SKIP risco " + FloatToString(riskPts, 0) + " > max " + FloatToString(maxRiskPts, 0) + " pts (cap)", clOlive);
+              if (riskArmed = 1) then
+              begin
+                posLots := orderLots;
+                obEntryPx := entry;
+                obBeDone := 0;
+                obTrailSteps := 0;
+                obSlMoves := 0;
+                BuyAtMarket(orderLots);
+                tradesRD := tradesRD + 1;
+                tradesToday := tradesToday + 1;
+                lockedMod := 8;
+                end;
             end;
           end
           else if (Close[1] > Open[1]) and (emaF < emaS) and (Close < emaF) then
@@ -783,11 +1162,32 @@ begin
             begin
               entrySL := sl;
               entryTP := entry - RD_RewardRisk * risk;
-              posLots := orderLots;
-        SellShortAtMarket(orderLots);
-              tradesRD := tradesRD + 1;
-              tradesToday := tradesToday + 1;
-              lockedMod := 8;
+              riskPts := Abs(entry - entrySL) / tick;
+              rewardPts := Abs(entry - entryTP) / tick;
+              riskArmed := 0;
+              if (riskPts > 0) and (riskPts <= maxRiskPts) then
+              begin
+                if (rewardPts > maxRewardPts) then
+                begin
+            entryTP := entry - maxRewardPts * tick;
+                  rewardPts := maxRewardPts;
+                end;
+                riskArmed := 1;
+              end
+              else if (EnableConsoleLog = 1) then
+                ConsoleLog("RR .. SKIP risco " + FloatToString(riskPts, 0) + " > max " + FloatToString(maxRiskPts, 0) + " pts (cap)", clOlive);
+              if (riskArmed = 1) then
+              begin
+                posLots := orderLots;
+                obEntryPx := entry;
+                obBeDone := 0;
+                obTrailSteps := 0;
+                obSlMoves := 0;
+                SellShortAtMarket(orderLots);
+                tradesRD := tradesRD + 1;
+                tradesToday := tradesToday + 1;
+                lockedMod := 8;
+                end;
             end;
           end;
         end
@@ -801,11 +1201,32 @@ begin
           begin
             entrySL := sl;
             entryTP := entry + RD_RewardRisk * risk;
-            posLots := orderLots;
-        BuyAtMarket(orderLots);
-            tradesRD := tradesRD + 1;
-            tradesToday := tradesToday + 1;
-            lockedMod := 8;
+            riskPts := Abs(entry - entrySL) / tick;
+            rewardPts := Abs(entry - entryTP) / tick;
+            riskArmed := 0;
+            if (riskPts > 0) and (riskPts <= maxRiskPts) then
+            begin
+              if (rewardPts > maxRewardPts) then
+              begin
+            entryTP := entry + maxRewardPts * tick;
+                rewardPts := maxRewardPts;
+              end;
+              riskArmed := 1;
+            end
+            else if (EnableConsoleLog = 1) then
+              ConsoleLog("RR .. SKIP risco " + FloatToString(riskPts, 0) + " > max " + FloatToString(maxRiskPts, 0) + " pts (cap)", clOlive);
+            if (riskArmed = 1) then
+            begin
+              posLots := orderLots;
+              obEntryPx := entry;
+              obBeDone := 0;
+              obTrailSteps := 0;
+              obSlMoves := 0;
+              BuyAtMarket(orderLots);
+              tradesRD := tradesRD + 1;
+              tradesToday := tradesToday + 1;
+              lockedMod := 8;
+              end;
           end;
         end
         else if (emaF < emaS) and (Close < emaF) and (Abs(High - dayH) <= buf) and (Close < Open) then
@@ -818,11 +1239,32 @@ begin
           begin
             entrySL := sl;
             entryTP := entry - RD_RewardRisk * risk;
-            posLots := orderLots;
-        SellShortAtMarket(orderLots);
-            tradesRD := tradesRD + 1;
-            tradesToday := tradesToday + 1;
-            lockedMod := 8;
+            riskPts := Abs(entry - entrySL) / tick;
+            rewardPts := Abs(entry - entryTP) / tick;
+            riskArmed := 0;
+            if (riskPts > 0) and (riskPts <= maxRiskPts) then
+            begin
+              if (rewardPts > maxRewardPts) then
+              begin
+            entryTP := entry - maxRewardPts * tick;
+                rewardPts := maxRewardPts;
+              end;
+              riskArmed := 1;
+            end
+            else if (EnableConsoleLog = 1) then
+              ConsoleLog("RR .. SKIP risco " + FloatToString(riskPts, 0) + " > max " + FloatToString(maxRiskPts, 0) + " pts (cap)", clOlive);
+            if (riskArmed = 1) then
+            begin
+              posLots := orderLots;
+              obEntryPx := entry;
+              obBeDone := 0;
+              obTrailSteps := 0;
+              obSlMoves := 0;
+              SellShortAtMarket(orderLots);
+              tradesRD := tradesRD + 1;
+              tradesToday := tradesToday + 1;
+              lockedMod := 8;
+              end;
           end;
         end;
       end
@@ -846,11 +1288,32 @@ begin
             begin
               entrySL := sl;
               entryTP := vwapV;
-              posLots := orderLots;
-        SellShortAtMarket(orderLots);
-              tradesLF := tradesLF + 1;
-              tradesToday := tradesToday + 1;
-              lockedMod := 9;
+              riskPts := Abs(entry - entrySL) / tick;
+              rewardPts := Abs(entry - entryTP) / tick;
+              riskArmed := 0;
+              if (riskPts > 0) and (riskPts <= maxRiskPts) then
+              begin
+                if (rewardPts > maxRewardPts) then
+                begin
+            entryTP := entry - maxRewardPts * tick;
+                  rewardPts := maxRewardPts;
+                end;
+                riskArmed := 1;
+              end
+              else if (EnableConsoleLog = 1) then
+                ConsoleLog("RR .. SKIP risco " + FloatToString(riskPts, 0) + " > max " + FloatToString(maxRiskPts, 0) + " pts (cap)", clOlive);
+              if (riskArmed = 1) then
+              begin
+                posLots := orderLots;
+                obEntryPx := entry;
+                obBeDone := 0;
+                obTrailSteps := 0;
+                obSlMoves := 0;
+                SellShortAtMarket(orderLots);
+                tradesLF := tradesLF + 1;
+                tradesToday := tradesToday + 1;
+                lockedMod := 9;
+                end;
             end;
           end
           else
@@ -863,11 +1326,32 @@ begin
             begin
               entrySL := sl;
               entryTP := vwapV;
-              posLots := orderLots;
-        BuyAtMarket(orderLots);
-              tradesLF := tradesLF + 1;
-              tradesToday := tradesToday + 1;
-              lockedMod := 9;
+              riskPts := Abs(entry - entrySL) / tick;
+              rewardPts := Abs(entry - entryTP) / tick;
+              riskArmed := 0;
+              if (riskPts > 0) and (riskPts <= maxRiskPts) then
+              begin
+                if (rewardPts > maxRewardPts) then
+                begin
+            entryTP := entry + maxRewardPts * tick;
+                  rewardPts := maxRewardPts;
+                end;
+                riskArmed := 1;
+              end
+              else if (EnableConsoleLog = 1) then
+                ConsoleLog("RR .. SKIP risco " + FloatToString(riskPts, 0) + " > max " + FloatToString(maxRiskPts, 0) + " pts (cap)", clOlive);
+              if (riskArmed = 1) then
+              begin
+                posLots := orderLots;
+                obEntryPx := entry;
+                obBeDone := 0;
+                obTrailSteps := 0;
+                obSlMoves := 0;
+                BuyAtMarket(orderLots);
+                tradesLF := tradesLF + 1;
+                tradesToday := tradesToday + 1;
+                lockedMod := 9;
+                end;
             end;
           end;
         end
@@ -902,11 +1386,32 @@ begin
             begin
               entrySL := sl;
               entryTP := vwapV;
-              posLots := orderLots;
-              SellShortAtMarket(orderLots);
-              tradesVF := tradesVF + 1;
-              tradesToday := tradesToday + 1;
-              lockedMod := 10;
+              riskPts := Abs(entry - entrySL) / tick;
+              rewardPts := Abs(entry - entryTP) / tick;
+              riskArmed := 0;
+              if (riskPts > 0) and (riskPts <= maxRiskPts) then
+              begin
+                if (rewardPts > maxRewardPts) then
+                begin
+            entryTP := entry - maxRewardPts * tick;
+                  rewardPts := maxRewardPts;
+                end;
+                riskArmed := 1;
+              end
+              else if (EnableConsoleLog = 1) then
+                ConsoleLog("RR .. SKIP risco " + FloatToString(riskPts, 0) + " > max " + FloatToString(maxRiskPts, 0) + " pts (cap)", clOlive);
+              if (riskArmed = 1) then
+              begin
+                posLots := orderLots;
+                obEntryPx := entry;
+                obBeDone := 0;
+                obTrailSteps := 0;
+                obSlMoves := 0;
+                SellShortAtMarket(orderLots);
+                tradesVF := tradesVF + 1;
+                tradesToday := tradesToday + 1;
+                lockedMod := 10;
+                end;
             end;
           end
           else
@@ -922,11 +1427,32 @@ begin
             begin
               entrySL := sl;
               entryTP := vwapV;
-              posLots := orderLots;
-              BuyAtMarket(orderLots);
-              tradesVF := tradesVF + 1;
-              tradesToday := tradesToday + 1;
-              lockedMod := 10;
+              riskPts := Abs(entry - entrySL) / tick;
+              rewardPts := Abs(entry - entryTP) / tick;
+              riskArmed := 0;
+              if (riskPts > 0) and (riskPts <= maxRiskPts) then
+              begin
+                if (rewardPts > maxRewardPts) then
+                begin
+            entryTP := entry + maxRewardPts * tick;
+                  rewardPts := maxRewardPts;
+                end;
+                riskArmed := 1;
+              end
+              else if (EnableConsoleLog = 1) then
+                ConsoleLog("RR .. SKIP risco " + FloatToString(riskPts, 0) + " > max " + FloatToString(maxRiskPts, 0) + " pts (cap)", clOlive);
+              if (riskArmed = 1) then
+              begin
+                posLots := orderLots;
+                obEntryPx := entry;
+                obBeDone := 0;
+                obTrailSteps := 0;
+                obSlMoves := 0;
+                BuyAtMarket(orderLots);
+                tradesVF := tradesVF + 1;
+                tradesToday := tradesToday + 1;
+                lockedMod := 10;
+                end;
             end;
           end;
         end
@@ -994,7 +1520,7 @@ begin
       else if (lockedMod > 0) then
         ConsoleLog("RR " + FloatToString(Time, 0) + " | LOCK mod=" + FloatToString(lockedMod, 0) + " | cx=" + FloatToString(boxPts, 0) + " ADX=" + FloatToString(adxV, 0) + " dPnL=" + FloatToString(dayPnL, 0), clAqua)
       else
-        ConsoleLog("RR " + FloatToString(Time, 0) + " | mod=" + FloatToString(activeMod, 0) + " st=" + FloatToString(statusCode, 0) + " | cx=" + FloatToString(boxPts, 0) + " ADX=" + FloatToString(adxV, 0) + " R2=" + FloatToString(r2Day, 0) + " t=" + FloatToString(tradesToday, 0) + " vol=" + FloatToString(orderLots, 0) + " dPnL=" + FloatToString(dayPnL, 0), clWhite);
+        ConsoleLog("RR " + FloatToString(Time, 0) + " | mod=" + FloatToString(activeMod, 0) + " st=" + FloatToString(statusCode, 0) + " | cx=" + FloatToString(boxPts, 0) + " ADX=" + FloatToString(adxV, 0) + " R2=" + FloatToString(r2Day, 0) + " t=" + FloatToString(tradesToday, 0) + " vol=" + FloatToString(orderLots, 0) + " riskMax=" + FloatToString(maxRiskPts, 0) + " dPnL=" + FloatToString(dayPnL, 0), clWhite);
     end;
   end;
 
