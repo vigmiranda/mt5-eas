@@ -4,6 +4,8 @@ No Experts do MT5 a coluna **Mensagem** é estreita. Por isso o pulse M5 usa **2
 
 Documentação geral do EA: [`README.md`](../../README.md) · regras: [`REGRAS.md`](../../REGRAS.md).
 
+**Sizing (v1.10):** `BY_CAPITAL` padrão — capital virtual **&lt;R$5k → 1 mini** · **≥R$5k → 2** · **≥R$8k → 3** (teto `InpMaxVolume`), igual em OB/PB/CB/VF/PM. Init loga `sizing=… | vol=… | bandas …`.
+
 ---
 
 ## Formato a cada barra M5

@@ -11,9 +11,10 @@
 //| v1.07: VF liberado em R2 (mesmos critérios); aviso se chart ≠ InpTF|
 //| v1.08: fix risco/dist pts (cotação/SL=0) + VF dist no close da barra|
 //| v1.09: QuotesOk com fallback Tick/LAST (Clear WIN$N bid/ask=0)|
+//| v1.10: sizing conservador por capital (todas as estratégias)  |
 //+------------------------------------------------------------------+
 #property copyright "Vitor / mt5-eas"
-#property version   "1.09"
+#property version   "1.10"
 #property strict
 
 #include <Trade/Trade.mqh>
@@ -43,11 +44,20 @@ enum ENUM_MODULE
    MOD_VWAPFADE = 5
 };
 
+enum ENUM_WIN_SIZING
+{
+   SIZING_BY_CAPITAL = 0, // <5k→1 | 5k–8k→2 | ≥8k→3
+   SIZING_FIXED      = 1  // InpFixedVolume
+};
+
 //------------------------ Inputs ------------------------------------
 input group "=== Volume / capital virtual ==="
+input ENUM_WIN_SIZING InpSizingMode = SIZING_BY_CAPITAL;
 input double InpClearSaldo        = 4538.48;  // Saldo Clear atual
-input double InpFixedVolume       = 1.0;      // OB/Pullback: contratos fixos
-input double InpMaxVolume         = 10.0;
+input double InpFixedVolume       = 1.0;      // só se SIZING_FIXED
+input double InpLotBand2Cap       = 5000.0;   // capital ≥ → 2 minis (todas)
+input double InpLotBand3Cap       = 8000.0;   // capital ≥ → 3 minis (todas)
+input double InpMaxVolume         = 3.0;      // teto duro de contratos
 input bool   InpEstimateFees      = true;
 input double InpFeePerSide        = 0.25;
 input bool   InpIncludeFloating   = true;
@@ -141,9 +151,7 @@ input double InpPM_ATR_SpaceMult  = 0.50;     // Espaço entre pernas = ATR × m
 input int    InpPM_SpaceMinPts    = 100;      // Piso espaçamento
 input int    InpPM_SpaceMaxPts    = 200;      // Teto espaçamento
 input int    InpPM_MinGainPts     = 40;       // Alvo mínimo além do médio
-input double InpPM_LotBand2Cap    = 6500.0;   // Capital ≥ → 2 minis/perna
-input double InpPM_LotBand3Cap    = 8500.0;   // Capital ≥ → 3 minis/perna
-input double InpPM_MaxLotsPerLeg  = 3.0;      // Teto duro por perna
+// Lote PM = mesma faixa de capital que OB/PB/CB/VF (InpLotBand*)
 
 input group "=== Geral ==="
 input ENUM_TIMEFRAMES InpTF       = PERIOD_M5;
@@ -382,18 +390,28 @@ double ClampVolume(const double v)
 }
 
 //+------------------------------------------------------------------+
-double CalcVolume() { return ClampVolume(InpFixedVolume); }
+// Faixas conservadoras (todas as estratégias): <5k→1 | ≥5k→2 | ≥8k→3
+double ContractsFromCapital(const double capital)
+{
+   double lots = 1.0;
+   if(capital >= InpLotBand3Cap) lots = 3.0;
+   else if(capital >= InpLotBand2Cap) lots = 2.0;
+   return ClampVolume(lots);
+}
 
 //+------------------------------------------------------------------+
-// Lote R4 por faixa de capital (mesma qtd em todas as pernas — sem dobrar)
+double CalcVolume()
+{
+   if(InpSizingMode == SIZING_FIXED)
+      return ClampVolume(InpFixedVolume);
+   return ContractsFromCapital(GetCapital());
+}
+
+//+------------------------------------------------------------------+
+// PM: mesma qtd em todas as pernas (sem dobrar) — alinhado ao sizing global
 double R4LotsPerLeg()
 {
-   double cap = GetCapital();
-   double lots = 1.0;
-   if(cap >= InpPM_LotBand3Cap) lots = 3.0;
-   else if(cap >= InpPM_LotBand2Cap) lots = 2.0;
-   lots = MathMin(lots, InpPM_MaxLotsPerLeg);
-   return ClampVolume(lots);
+   return CalcVolume();
 }
 
 //+------------------------------------------------------------------+
@@ -2125,11 +2143,11 @@ void UpdateChartComment()
       : (g_obAborted ? "OBabort" : "free");
 
    string txt = StringFormat(
-      "RR v1.09 %s | %s %s | %s\n"
+      "RR v1.10 %s | %s %s | %s\n"
       "%s\n"
       "OB%d PB%d CB%d VF%d PM%d | %s | cx=%.0f(%s)\n"
       "ADX%.0f EMA%.0f/%.0f ATR%.0f VWAP%.0f spr%d\n"
-      "cap R$%.0f | dPnL R$%.0f | STOP -R$%.0f%s\n"
+      "cap R$%.0f | vol%.0f | dPnL R$%.0f | STOP -R$%.0f%s\n"
       "PM cicR$%.0f lot%.0f | t %d/%d [o%d p%d c%d v%d m%d]\n"
       "act: %s\n"
       "skip: %s",
@@ -2139,7 +2157,7 @@ void UpdateChartComment()
       (InpEnableContBreak ? 1 : 0), (InpEnableVwapFade ? 1 : 0), (InpEnablePrecoMedio ? 1 : 0),
       lockTag, g_boxPts, boxTag,
       g_adx, g_emaFast, g_emaSlow, g_atrPts, g_vwap, CurrentSpreadPoints(),
-      GetCapital(), dayPnL, stopLim, (g_dayStopped ? " HALT" : ""),
+      GetCapital(), CalcVolume(), dayPnL, stopLim, (g_dayStopped ? " HALT" : ""),
       InpPM_CycleStopBRL, R4LotsPerLeg(),
       g_tradesToday, InpMaxTradesDay, g_tradesOB, g_tradesPB, g_tradesCB, g_tradesVF, g_tradesMR,
       ClipStr(g_lastAction, 72),
@@ -2183,15 +2201,17 @@ int OnInit()
    ResetDayIfNeeded();
    RefreshIndicators();
 
-   Print("========== RegimeRouterWIN v1.09 ==========");
+   Print("========== RegimeRouterWIN v1.10 ==========");
    Print("RR init | cascata OB>PB>CB>VF>PM | lock flat | sem meta | log curto");
-   Print("RR init | v1.09 QuotesOk fallback Tick/LAST | VF dist no close");
+   Print("RR init | v1.10 sizing conservador por capital (todas as estratégias)");
    PrintFormat("RR init | flags OB=%d PB=%d CB=%d VF=%d PM=%d | maxT=%d | STOP=%.0f%% (~R$%.0f)",
                (InpEnableOpenBreak ? 1 : 0), (InpEnablePullback ? 1 : 0),
                (InpEnableContBreak ? 1 : 0), (InpEnableVwapFade ? 1 : 0), (InpEnablePrecoMedio ? 1 : 0),
                InpMaxTradesDay, InpStopDiaPct, DailyLossLimitMoney());
-   PrintFormat("RR init | seed=R$%.2f (chart=R$%.2f) | vol=%.0f | magic=%I64d",
-               g_seedCapital, InpClearSaldo, CalcVolume(), InpMagic);
+   PrintFormat("RR init | seed=R$%.2f (chart=R$%.2f) | sizing=%s | vol=%.0f | bandas R$%.0f/R$%.0f teto=%.0f | magic=%I64d",
+               g_seedCapital, InpClearSaldo,
+               (InpSizingMode == SIZING_FIXED ? "FIXED" : "BY_CAPITAL"),
+               CalcVolume(), InpLotBand2Cap, InpLotBand3Cap, InpMaxVolume, InpMagic);
    PrintFormat("RR init | Point=%.5f TickSize=%.5f Digits=%d",
                _Point, TickSize(), (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS));
    PrintFormat("RR init | CB rangeEnd %02d:%02d ADX>=%.0f | VF dist>=%d ADX<=%.0f | PB ADX>=%.0f PM<=%.0f",
