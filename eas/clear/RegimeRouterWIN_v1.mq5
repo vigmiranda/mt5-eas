@@ -13,9 +13,10 @@
 //| v1.09: QuotesOk com fallback Tick/LAST (Clear WIN$N bid/ask=0)|
 //| v1.10: sizing conservador por capital (todas as estratégias)  |
 //| v1.11: em dia R2, VF só após 10:00 (evita chicote abertura)   |
+//| v1.12: VF SL piso ATR/min risk + RR vs VWAP; reconta trades dia |
 //+------------------------------------------------------------------+
 #property copyright "Vitor / mt5-eas"
-#property version   "1.11"
+#property version   "1.12"
 #property strict
 
 #include <Trade/Trade.mqh>
@@ -138,9 +139,12 @@ input int    InpCB_MaxRiskPts     = 600;
 input group "=== Módulo VWAP fade (R6) ==="
 input int    InpVF_MinDistPts     = 150;      // Distância mínima à VWAP de sessão
 input double InpVF_ADXMax         = 22.0;     // Acima disso deixa p/ tendência (PB/CB)
-input int    InpVF_BufferPts      = 30;       // SL além do extremo
-input int    InpVF_MinRiskPts     = 80;
-input int    InpVF_MaxRiskPts     = 400;
+input int    InpVF_BufferPts      = 30;       // SL além do extremo (estrutura)
+input int    InpVF_MinRiskPts     = 200;      // Piso duro de risco (pts) — anti stop curto
+input double InpVF_SL_ATR_Mult    = 1.00;     // Piso SL >= ATR × mult
+input double InpVF_R2_SL_ATR_Mult = 1.25;     // Em R2: piso ainda maior
+input int    InpVF_MaxRiskPts     = 500;      // Acima disso skip (não alonga infinito)
+input double InpVF_MinRewardRisk  = 1.00;     // Distância até VWAP >= risco × este
 input int    InpVF_R2StartH       = 10;       // Em dia R2: VF só a partir desta hora
 input int    InpVF_R2StartM       = 0;
 
@@ -712,6 +716,46 @@ double PriceDiffToPts(const double a, const double b)
    if(_Point > 0.0)
       return MathAbs(a - b) / _Point;
    return MathAbs(a - b);
+}
+
+//+------------------------------------------------------------------+
+double PtsToPriceDist(const double pts)
+{
+   if(_Point > 0.0)
+      return pts * _Point;
+   return pts;
+}
+
+//+------------------------------------------------------------------+
+// Reconta entradas do dia no histórico (sobrevive F7 / reattach)
+void RebuildDayTradeCounts()
+{
+   if(g_dayStart <= 0) return;
+   g_tradesToday = 0;
+   g_tradesOB = 0;
+   g_tradesPB = 0;
+   g_tradesCB = 0;
+   g_tradesVF = 0;
+   g_tradesMR = 0;
+   if(!HistorySelect(g_dayStart, TimeTradeServer() + 1)) return;
+
+   int total = HistoryDealsTotal();
+   for(int i = 0; i < total; i++)
+   {
+      ulong ticket = HistoryDealGetTicket(i);
+      if(ticket == 0) continue;
+      if((long)HistoryDealGetInteger(ticket, DEAL_MAGIC) != InpMagic) continue;
+      if(HistoryDealGetString(ticket, DEAL_SYMBOL) != _Symbol) continue;
+      if(HistoryDealGetInteger(ticket, DEAL_ENTRY) != DEAL_ENTRY_IN) continue;
+
+      string cmt = HistoryDealGetString(ticket, DEAL_COMMENT);
+      g_tradesToday++;
+      if(StringFind(cmt, "|OB") >= 0) g_tradesOB++;
+      else if(StringFind(cmt, "|PB") >= 0) g_tradesPB++;
+      else if(StringFind(cmt, "|CB") >= 0) g_tradesCB++;
+      else if(StringFind(cmt, "|VF") >= 0) g_tradesVF++;
+      else if(StringFind(cmt, "|PM") >= 0) g_tradesMR++;
+   }
 }
 
 //+------------------------------------------------------------------+
@@ -1914,14 +1958,29 @@ void ModuleVwapFade()
    double buf = InpVF_BufferPts * (_Point > 0.0 ? _Point : 1.0);
    if(MathAbs(_Point - 1.0) < 1e-8) buf = (double)InpVF_BufferPts;
 
-   double sl = (dir > 0) ? (low1 - buf) : (high1 + buf);
+   // SL estrutural (extremo da barra) — depois aplica PISO (nunca stop curto)
+   double slStruct = (dir > 0) ? (low1 - buf) : (high1 + buf);
+   slStruct = SnapPrice(slStruct);
+
+   double atrFloor = g_atrPts * (g_r2Day ? InpVF_R2_SL_ATR_Mult : InpVF_SL_ATR_Mult);
+   double floorPts = MathMax((double)InpVF_MinRiskPts, atrFloor);
+   if(floorPts < 1.0) floorPts = (double)InpVF_MinRiskPts;
+
+   double slFloor = (dir > 0)
+      ? SnapPrice(entry - PtsToPriceDist(floorPts))
+      : SnapPrice(entry + PtsToPriceDist(floorPts));
+   // Mais longe do entry = stop definitivo (não paliativo de horário)
+   double sl = (dir > 0)
+      ? MathMin(slStruct, slFloor)
+      : MathMax(slStruct, slFloor);
    sl = SnapPrice(sl);
+
    double tp = SnapPrice(g_vwap);
    double riskPts = 0.0;
    string riskWhy = "";
-   if(!RiskPtsOk(entry, sl, InpVF_MinRiskPts, InpVF_MaxRiskPts, riskPts, riskWhy))
+   if(!RiskPtsOk(entry, sl, (int)MathFloor(floorPts + 1e-8), InpVF_MaxRiskPts, riskPts, riskWhy))
    {
-      LogSkip(StringFormat("VF %s", riskWhy));
+      LogSkip(StringFormat("VF %s (piso≈%.0f ATR×)", riskWhy, floorPts));
       if(StringFind(riskWhy, "absurdo") >= 0 || StringFind(riskWhy, "<=") >= 0)
          return;
       g_lastBarVF = barTime;
@@ -1940,8 +1999,19 @@ void ModuleVwapFade()
       g_lastBarVF = barTime;
       return;
    }
+   // RR: alvo VWAP precisa pagar pelo menos MinRewardRisk × risco do SL alargado
+   double rewardPts = PriceDiffToPts(entry, tp);
+   if(InpVF_MinRewardRisk > 0.0 && rewardPts + 1e-8 < riskPts * InpVF_MinRewardRisk)
+   {
+      LogSkip(StringFormat("VF RR fraco reward=%.0f < risco=%.0f × %.2f — skip (não alonga alvo)",
+                           rewardPts, riskPts, InpVF_MinRewardRisk));
+      g_lastBarVF = barTime;
+      return;
+   }
 
    g_lastBarVF = barTime;
+   LogWhy(StringFormat("VF SL piso struct=%.0f floorPts=%.0f ATR=%.0f → SL=%.0f risk=%.0f reward=%.0f",
+                       slStruct, floorPts, g_atrPts, sl, riskPts, rewardPts));
    if(OpenMarket(dir, sl, tp, "VF"))
    {
       g_tradesVF++;
@@ -2157,7 +2227,7 @@ void UpdateChartComment()
       : (g_obAborted ? "OBabort" : "free");
 
    string txt = StringFormat(
-      "RR v1.11 %s | %s %s | %s\n"
+      "RR v1.12 %s | %s %s | %s\n"
       "%s\n"
       "OB%d PB%d CB%d VF%d PM%d | %s | cx=%.0f(%s)\n"
       "ADX%.0f EMA%.0f/%.0f ATR%.0f VWAP%.0f spr%d\n"
@@ -2213,13 +2283,17 @@ int OnInit()
    }
 
    ResetDayIfNeeded();
+   RebuildDayTradeCounts();
    RefreshIndicators();
 
-   Print("========== RegimeRouterWIN v1.11 ==========");
+   Print("========== RegimeRouterWIN v1.12 ==========");
    Print("RR init | cascata OB>PB>CB>VF>PM | lock flat | sem meta | log curto");
-   Print("RR init | v1.11 VF em R2 só após 10:00 | sizing conservador por capital");
-   PrintFormat("RR init | VF R2 start %02d:%02d | dist>=%d ADX<=%.0f",
-               InpVF_R2StartH, InpVF_R2StartM, InpVF_MinDistPts, InpVF_ADXMax);
+   Print("RR init | v1.12 VF SL piso ATR/minRisk + RR vs VWAP | reconta trades do dia");
+   PrintFormat("RR init | VF R2 start %02d:%02d | dist>=%d ADX<=%.0f | SL piso %dpts / ATR×%.2f (R2×%.2f) RR>=%.2f",
+               InpVF_R2StartH, InpVF_R2StartM, InpVF_MinDistPts, InpVF_ADXMax,
+               InpVF_MinRiskPts, InpVF_SL_ATR_Mult, InpVF_R2_SL_ATR_Mult, InpVF_MinRewardRisk);
+   PrintFormat("RR init | trades reconstruidos hoje=%d [o%d p%d c%d v%d m%d]",
+               g_tradesToday, g_tradesOB, g_tradesPB, g_tradesCB, g_tradesVF, g_tradesMR);
    PrintFormat("RR init | flags OB=%d PB=%d CB=%d VF=%d PM=%d | maxT=%d | STOP=%.0f%% (~R$%.0f)",
                (InpEnableOpenBreak ? 1 : 0), (InpEnablePullback ? 1 : 0),
                (InpEnableContBreak ? 1 : 0), (InpEnableVwapFade ? 1 : 0), (InpEnablePrecoMedio ? 1 : 0),

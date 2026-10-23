@@ -8,6 +8,8 @@ Documentação geral do EA: [`README.md`](../../README.md) · regras: [`REGRAS.m
 
 **VF em R2 (v1.11):** em dia de caixa explosiva, VWAP fade só após **10:00** (`InpVF_R2StartH/M`). Skip: `VF em R2 só após 10:00…`.
 
+**VF SL (v1.12):** stop = mais longe entre (extremo+buffer) e piso `max(MinRiskPts, ATR×mult)` (R2 usa mult maior). Se distância à VWAP &lt; risco×`MinRewardRisk` → skip `VF RR fraco…`. Init reconta trades do histórico (`trades reconstruidos`).
+
 ---
 
 ## Formato a cada barra M5
