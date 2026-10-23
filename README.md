@@ -18,18 +18,18 @@ Automação multiplataforma:
 
 | Ativo | Timeframe | EA | Magic | Versão | Papel |
 |-------|-----------|----|-------|--------|-------|
-| WINV26 / WIN$ | M5 | **RegimeRouterWIN_v1** | 260920 | 1.10 | **Único EA ativo (roteador em cascata)** |
+| WINV26 / WIN$ | M5 | **RegimeRouterWIN_v1** | 260920 | 1.11 | **Único EA ativo (roteador em cascata)** |
 
 EAs anteriores (OpenBreak, Pullback, ScalpWIN, TrendWIN) estão em [`eas/clear/archive/`](eas/clear/archive/) — **não usar no real**.
 
-**RegimeRouterWIN_v1** — cascata M5 (v1.10)
+**RegimeRouterWIN_v1** — cascata M5 (v1.11)
 - **A OpenBreak → B Pullback → D ContBreak → E VwapFade → C Preço médio** (flags `InpEnable*`)
 - **CB / VF ligados por padrão** — desligue no input se for mal (`InpEnableContBreak` / `InpEnableVwapFade`)
 - **Lock:** 1 estratégia dona até flat (PM pode abrir pernas)
 - **Aborto cedo do OB** → libera B–E antes das 11h
 - PB só entra com **sinal de pullback** (senão a cascata tenta CB)
 - CB: rompimento do range manhã (09:00→11:00) com ADX≥22 · VF: fade à VWAP se dist≥150 pts e ADX≤22
-- **R2:** OB off · **PM** bloqueado · **VF liberado** (mesmos critérios) · PB/CB se fit
+- **R2:** OB off · **PM** bloqueado · **VF liberado só após 10:00** (`InpVF_R2Start*`) · PB/CB se fit
 - **Sizing (v1.10):** por capital virtual — **&lt;R$5k → 1** · **≥R$5k → 2** · **≥R$8k → 3** (teto), vale para OB/PB/CB/VF/PM; `SIZING_FIXED` opcional
 - **v1.08/1.09:** fix risco/dist pts + fallback de cotação (BID/ASK=0 no WIN$N)
 - Arraste no gráfico **WIN M5** (init avisa se chart ≠ `InpTF`) — sem afrouxar MaxBox / ADX / candle PB
@@ -40,7 +40,7 @@ EAs anteriores (OpenBreak, Pullback, ScalpWIN, TrendWIN) estão em [`eas/clear/a
 1. Remova qualquer EA antigo do gráfico WIN (OpenBreak/Pullback/Scalp…)
 2. Copie `eas/clear/RegimeRouterWIN_v1.mq5` → `MQL5/Experts/` → **F7**
 3. Arraste no **WIN M5**, Algotrading ON
-4. Log: `RegimeRouterWIN v1.10` + `RR …` (2 linhas/M5) — ver legenda
+4. Log: `RegimeRouterWIN v1.11` + `RR …` (2 linhas/M5) — ver legenda
 5. CB/VF já vêm ON — desligue no input se precisar
 
 ### Capital virtual Clear — como funciona
@@ -88,11 +88,11 @@ Demais EAs Nomo (ScalpXAU, Pattern, Trend*, Grid BTC, etc.) estão em [`eas/nomo
 
 | Ativo | Timeframe | Estratégia | Versão | Papel |
 |-------|-----------|------------|--------|-------|
-| WDO$ | M5 | **RegimeRouterWDO_v1** | 1.08 | Único robô ativo na sim Genial |
+| WDO$ | M5 | **RegimeRouterWDO_v1** | 1.09 | Único robô ativo na sim Genial |
 
 **RegimeRouterWDO_v1** — cascata larga p/ teste Genial (dólar) · DNA alinhado ao WIN
 - `OB → AB → OF → PB → NY → CB → IB → RD → LF → VF` (flags ON)
-- **R2:** OB/LF off · **VF on** · demais se fit
+- **R2:** OB/LF off · **VF on só após 10:00** (`VF_R2Start`) · demais se fit
 - **OB v1.07:** BE + trail SL; TP +1 a cada 2 subidas do SL (teto `OB_TP_MaxPts`)
 - **Sizing v1.08:** `SeedCapital` (+ `DailyResult`) — **&lt;R$5k → 1** · **≥R$5k → 2** · **≥R$8k → 3** (igual WIN; NTSL não lê saldo da corretora)
 - **Visual:** `RegimeRouterWDO_viz` = Regra de Coloração no gráfico (sem ordens); execução só na Automação

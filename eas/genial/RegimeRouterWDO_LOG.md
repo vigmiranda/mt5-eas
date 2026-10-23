@@ -120,6 +120,11 @@ Fluxo: BE conta como 1ª subida do SL → depois cada passo de trail. **TP só a
 - Eventos: `vol=` no pulse e em `RR ! ENTRADA`
 - Automação: máx posição ≥ `MaxLots` (3)
 
+## VF em R2 (v1.09)
+
+- Em dia R2, VF só se `Time >= VF_R2Start` (padrão **1000** = 10:00)
+- Dia R1 (caixa OK): horário do VF inalterado
+
 ---
 
 ## Ticks
