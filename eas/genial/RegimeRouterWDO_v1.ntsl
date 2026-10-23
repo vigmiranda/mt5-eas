@@ -1,10 +1,11 @@
-{ RegimeRouterWDO v1.08 - Genial/Profit Pro/WDO M5
+{ RegimeRouterWDO v1.09 - Genial/Profit Pro/WDO M5
   Cascata OB>AB>OF>PB>NY>CB>IB>RD>LF>VF | lock ate flat
   v1.04: VF elegivel em R2 (mesmos criterios); OB/LF off em R2
   v1.05: Plot4(visMod) + cores das linhas
   v1.06: ConsoleLog na aba Eventos da Automacao (tipo Experts MT5)
   v1.07: OB BE+trail SL; TP avanca 1 a cada 2 subidas do SL (so OB)
   v1.08: sizing conservador por SeedCapital (<5k->1 | >=5k->2 | >=8k->3)
+  v1.09: em dia R2, VF so apos 10:00 (VF_R2Start)
   Cores dos candles: use RegimeRouterWDO_viz (nao inserir ESTE como coloracao)
   Se ConsoleLog der erro de sintaxe: Profit antigo - atualize ou EnableConsoleLog=0 }
 input
@@ -118,6 +119,7 @@ input
   VF_BufferPts(6);
   VF_MinRiskPts(15);
   VF_MaxRiskPts(80);
+  VF_R2Start(1000);
 
 var
   dayDate, lockedMod, activeMod, statusCode : Integer;
@@ -867,8 +869,9 @@ begin
         else
           activeMod := 0;
       end
-      {--- 10 VF (tambem em R2; criterios dist/ADX iguais) ---}
-      else if (EnableVwapFade = 1) and (tradesVF = 0) and (adxV <= VF_ADXMax) then
+      {--- 10 VF (em R2 so apos VF_R2Start; criterios dist/ADX iguais) ---}
+      else if (EnableVwapFade = 1) and (tradesVF = 0) and (adxV <= VF_ADXMax)
+              and ((r2Day = 0) or (Time >= VF_R2Start)) then
       begin
         distPts := Abs(Close - vwapV) / tick;
         if (distPts >= VF_MinDistPts) then
@@ -887,7 +890,7 @@ begin
               entrySL := sl;
               entryTP := vwapV;
               posLots := orderLots;
-        SellShortAtMarket(orderLots);
+              SellShortAtMarket(orderLots);
               tradesVF := tradesVF + 1;
               tradesToday := tradesToday + 1;
               lockedMod := 10;
@@ -904,7 +907,7 @@ begin
               entrySL := sl;
               entryTP := vwapV;
               posLots := orderLots;
-        BuyAtMarket(orderLots);
+              BuyAtMarket(orderLots);
               tradesVF := tradesVF + 1;
               tradesToday := tradesToday + 1;
               lockedMod := 10;

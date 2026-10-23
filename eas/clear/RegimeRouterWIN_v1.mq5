@@ -12,9 +12,10 @@
 //| v1.08: fix risco/dist pts (cotação/SL=0) + VF dist no close da barra|
 //| v1.09: QuotesOk com fallback Tick/LAST (Clear WIN$N bid/ask=0)|
 //| v1.10: sizing conservador por capital (todas as estratégias)  |
+//| v1.11: em dia R2, VF só após 10:00 (evita chicote abertura)   |
 //+------------------------------------------------------------------+
 #property copyright "Vitor / mt5-eas"
-#property version   "1.10"
+#property version   "1.11"
 #property strict
 
 #include <Trade/Trade.mqh>
@@ -140,6 +141,8 @@ input double InpVF_ADXMax         = 22.0;     // Acima disso deixa p/ tendência
 input int    InpVF_BufferPts      = 30;       // SL além do extremo
 input int    InpVF_MinRiskPts     = 80;
 input int    InpVF_MaxRiskPts     = 400;
+input int    InpVF_R2StartH       = 10;       // Em dia R2: VF só a partir desta hora
+input int    InpVF_R2StartM       = 0;
 
 input group "=== Módulo R4 Preço Médio (lateral) ==="
 input int    InpMR_BBPeriod       = 20;
@@ -1242,6 +1245,17 @@ bool PatternVwapFade(string &why)
       why = "VWAP indisponível";
       return false;
    }
+   // Dia R2 (caixa explosiva): não fade no chicote 09:15–10:00
+   if(g_r2Day)
+   {
+      datetime now = TimeTradeServer();
+      if(MinutesOfDay(now) < HM(InpVF_R2StartH, InpVF_R2StartM))
+      {
+         why = StringFormat("VF em R2 só após %02d:%02d (agora evita abertura)",
+                            InpVF_R2StartH, InpVF_R2StartM);
+         return false;
+      }
+   }
    if(!RefreshIndicators()) { why = "indicadores indisponíveis"; return false; }
    if(g_adx > InpVF_ADXMax)
    {
@@ -1428,7 +1442,7 @@ void ClassifyRegime(const datetime now)
       return;
    }
 
-   // --- E: VWAP fade — extensão vs VWAP (também em R2; PM continua bloqueado) ---
+   // --- E: VWAP fade — extensão vs VWAP (em R2 só após InpVF_R2Start*; PM bloqueado) ---
    if(InpEnableVwapFade && g_tradesVF == 0 && PatternVwapFade(why))
    {
       g_regime = REG_R6_VWAP_FADE;
@@ -2143,7 +2157,7 @@ void UpdateChartComment()
       : (g_obAborted ? "OBabort" : "free");
 
    string txt = StringFormat(
-      "RR v1.10 %s | %s %s | %s\n"
+      "RR v1.11 %s | %s %s | %s\n"
       "%s\n"
       "OB%d PB%d CB%d VF%d PM%d | %s | cx=%.0f(%s)\n"
       "ADX%.0f EMA%.0f/%.0f ATR%.0f VWAP%.0f spr%d\n"
@@ -2201,9 +2215,11 @@ int OnInit()
    ResetDayIfNeeded();
    RefreshIndicators();
 
-   Print("========== RegimeRouterWIN v1.10 ==========");
+   Print("========== RegimeRouterWIN v1.11 ==========");
    Print("RR init | cascata OB>PB>CB>VF>PM | lock flat | sem meta | log curto");
-   Print("RR init | v1.10 sizing conservador por capital (todas as estratégias)");
+   Print("RR init | v1.11 VF em R2 só após 10:00 | sizing conservador por capital");
+   PrintFormat("RR init | VF R2 start %02d:%02d | dist>=%d ADX<=%.0f",
+               InpVF_R2StartH, InpVF_R2StartM, InpVF_MinDistPts, InpVF_ADXMax);
    PrintFormat("RR init | flags OB=%d PB=%d CB=%d VF=%d PM=%d | maxT=%d | STOP=%.0f%% (~R$%.0f)",
                (InpEnableOpenBreak ? 1 : 0), (InpEnablePullback ? 1 : 0),
                (InpEnableContBreak ? 1 : 0), (InpEnableVwapFade ? 1 : 0), (InpEnablePrecoMedio ? 1 : 0),

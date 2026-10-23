@@ -6,6 +6,8 @@ Documentação geral do EA: [`README.md`](../../README.md) · regras: [`REGRAS.m
 
 **Sizing (v1.10):** `BY_CAPITAL` padrão — capital virtual **&lt;R$5k → 1 mini** · **≥R$5k → 2** · **≥R$8k → 3** (teto `InpMaxVolume`), igual em OB/PB/CB/VF/PM. Init loga `sizing=… | vol=… | bandas …`.
 
+**VF em R2 (v1.11):** em dia de caixa explosiva, VWAP fade só após **10:00** (`InpVF_R2StartH/M`). Skip: `VF em R2 só após 10:00…`.
+
 ---
 
 ## Formato a cada barra M5
