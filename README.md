@@ -88,14 +88,15 @@ Demais EAs Nomo (ScalpXAU, Pattern, Trend*, Grid BTC, etc.) estão em [`eas/nomo
 
 | Ativo | Timeframe | Estratégia | Versão | Papel |
 |-------|-----------|------------|--------|-------|
-| WDO$ | M5 | **RegimeRouterWDO_v1** | 1.10 | Único robô ativo na sim Genial |
+| WDO$ | M5 | **RegimeRouterWDO_v1** | 1.11 | Único robô ativo na sim Genial |
 
 **RegimeRouterWDO_v1** — cascata larga p/ teste Genial (dólar) · DNA alinhado ao WIN
 - `OB → AB → OF → PB → NY → CB → IB → RD → LF → VF` (flags ON)
 - **R2:** OB/LF off · **VF on só após 10:00** (`VF_R2Start`) · demais se fit
-- **VF SL (v1.10):** piso ATR/min risk + RR vs VWAP (igual ideia do WIN v1.12)
-- **OB v1.07:** BE + trail SL; TP +1 a cada 2 subidas do SL (teto `OB_TP_MaxPts`)
-- **Sizing v1.08:** `SeedCapital` (+ `DailyResult`) — **&lt;R$5k → 1** · **≥R$5k → 2** · **≥R$8k → 3** (igual WIN; NTSL não lê saldo da corretora)
+- **Risco dinâmico (v1.11):** max risco/trade = `%` do `SeedCapital` (teto fração do STOP DIA); TP encurtado se longe demais; skip se SL &gt; max (`riskMax=` no log)
+- **Gestão (v1.11):** BE+trail em **todos** os módulos (não só OB) — evita ficar até o flat sem SL/TP
+- **VF SL (v1.10):** piso ATR/min risk + RR vs VWAP
+- **Sizing v1.08:** `SeedCapital` — **&lt;R$5k → 1** · **≥R$5k → 2** · **≥R$8k → 3**
 - **Visual:** `RegimeRouterWDO_viz` = Regra de Coloração no gráfico (sem ordens); execução só na Automação
 - Automação **WDO M5** · máx posição **≥ MaxLots (3)** · sem preço médio
 - STOP via `SeedCapital` (5%) ou `StopDiaReais`

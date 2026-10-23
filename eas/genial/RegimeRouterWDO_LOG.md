@@ -130,6 +130,15 @@ Fluxo: BE conta como 1ª subida do SL → depois cada passo de trail. **TP só a
 - SL = mais longe entre extremo+buffer e piso `max(VF_MinRiskPts, ATR×mult)` (R2: `VF_R2_SL_ATR_Mult`)
 - Só entra se distância à VWAP ≥ risco × `VF_MinRewardRisk`
 
+## Risco dinâmico + gestão (v1.11)
+
+- `maxRiskBRL ≈ SeedCapital × RiskPctPerTrade%` (teto `stopLim × RiskFracOfStop`)
+- `maxRiskPts = maxRiskBRL / (PointValueBRL × lots)` — WDO default R$10/pt
+- Entrada: se risco do SL &gt; max → **SKIP** (`risco X > max Y pts (cap)`)
+- TP longe demais → encurta para `maxRiskPts × DynRewardRisk`
+- Em posição: **BE + trail** em qualquer módulo (`Manage_BE_Pts` / `Manage_TrailStepPts`)
+- Pulse: `riskMax=`
+
 ---
 
 ## Ticks
