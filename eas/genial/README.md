@@ -5,14 +5,14 @@ Conta **simulação** Genial · **Profit Pro** · **WDO** M5 · teste ~**1 mês*
 
 | Arquivo | Uso |
 |---------|-----|
-| [`RegimeRouterWDO_v1.ntsl`](RegimeRouterWDO_v1.ntsl) | **Execução** — Automação (**v1.07** + OB BE/trail + `ConsoleLog`) |
+| [`RegimeRouterWDO_v1.ntsl`](RegimeRouterWDO_v1.ntsl) | **Execução** — Automação (**v1.08** + sizing por `SeedCapital` + OB BE/trail + `ConsoleLog`) |
 | [`RegimeRouterWDO_viz.ntsl`](RegimeRouterWDO_viz.ntsl) | **Só visual** v1.02 — cor + PlotText no candle (sem ordens) |
 | [`RegimeRouterWDO_LOG.md`](RegimeRouterWDO_LOG.md) | Legenda mod/st + cores |
 | [`RegimeRouterWDO_smoke.ntsl`](RegimeRouterWDO_smoke.ntsl) | Smoke se o editor falhar |
 
 ---
 
-## Cascata v1.07 (10 módulos, flags ON)
+## Cascata v1.08 (10 módulos, flags ON)
 
 ```
 OB → AB → OF → PB → NY → CB → IB → RD → LF → VF
@@ -42,7 +42,7 @@ Sem preço médio. Desligue no input o que for mal (**uma flag por vez**).
 
 Profit não tem log tipo MT5. Para **analisar** o dia:
 
-1. Automação = **`RegimeRouterWDO` v1.07** — aba **Eventos** recebe `ConsoleLog` (`RR …` a cada M5, tipo Experts). OB: BE+trail SL e TP +1 a cada 2 subidas do SL. Se der erro de sintaxe em `ConsoleLog`, Profit antigo: atualize ou `EnableConsoleLog=0`.  
+1. Automação = **`RegimeRouterWDO` v1.08** — aba **Eventos** recebe `ConsoleLog` (`RR …` a cada M5, tipo Experts). OB: BE+trail SL e TP +1 a cada 2 subidas do SL. Sizing: `SeedCapital` nas faixas 1/2/3. Se der erro de sintaxe em `ConsoleLog`, Profit antigo: atualize ou `EnableConsoleLog=0`.  
 2. Compila **`RegimeRouterWDO_viz`** v1.02 (raw GitHub, texto puro).  
 3. Gráfico WDO M5 → **Inserir Regra de Coloração** → `RegimeRouterWDO_viz`.  
 4. No candle aparece texto (`OB`/`VF`/`R2`/`IDLE`…) + cor.  
@@ -55,7 +55,20 @@ Legenda: [`RegimeRouterWDO_LOG.md`](RegimeRouterWDO_LOG.md).
 
 - Automação sempre em **WDO M5** (não M1).
 - Conta **Sim** até fechar o mês de validação.
-- Qtd **1** / máx posição **1**.
+- **Máx posição ≥ 3** (teto do sizing). A Qtd da automação pode ficar 1 — o código manda `BuyAtMarket(n)`.
+
+### Sizing (v1.08) — igual WIN, via `SeedCapital`
+
+O NTSL **não lê** o saldo da Genial. Por isso o capital é o input `SeedCapital` (+ `DailyResult` no dia):
+
+| Capital efetivo | Contratos |
+|-----------------|-----------|
+| &lt; R$5.000 | 1 |
+| ≥ R$5.000 | 2 |
+| ≥ R$8.000 | 3 (`MaxLots`) |
+
+- `SizingByCapital=0` → usa só `FixedLots`
+- `SeedCapital=0` → cai em `FixedLots` (e STOP usa `StopDiaReais`)
 
 ## Onde ver o saldo da simulação
 
@@ -64,7 +77,7 @@ Legenda: [`RegimeRouterWDO_LOG.md`](RegimeRouterWDO_LOG.md).
 3. Embaixo, aba **Custódia** (ou **Day Trade**): olhe **Saldo** / **Patrimônio** / **Líquido** / **Total**.  
 4. Alternativa: menu **Negociação** → opções de conta / financeiro da sim.
 
-Anota esse valor → `SeedCapital` **ou** 5% dele em `StopDiaReais`.
+Anota esse valor → `SeedCapital` (sizing + STOP 5%) **ou** só `StopDiaReais` se preferir lote fixo.
 
 Quando for migrar parte do capital Clear → Genial: `SeedCapital` = valor alocado na Genial e `StopDiaPct = 5`.
 
@@ -77,8 +90,8 @@ Quando for migrar parte do capital Clear → Genial: `SeedCapital` = valor aloca
 4. **Automação de Estratégias** → Nova:
    - Conta: **Simulação**
    - Ativo: **WDO** (vencimento atual) · **M5**
-   - Qtd por ordem: **1** · Máx posição: **1**
-5. `SeedCapital` = saldo da sim **ou** `StopDiaReais` ≈ 5%  
+   - Qtd por ordem: **1** · Máx posição: **3** (permite as faixas)
+5. `SeedCapital` = saldo da sim (obrigatório p/ sizing 1/2/3)  
 6. Ative e deixe o Profit aberto no pregão.
 
 **Nota:** `VWAP` no Profit exige parâmetro — usamos `VWAP(1)` (diário).
@@ -87,10 +100,10 @@ Quando for migrar parte do capital Clear → Genial: `SeedCapital` = valor aloca
 
 ## Checklist do mês
 
-- [ ] Compilou execução `v1.05` + viz  
-- [ ] Automação na **sim** · **M5** · 1 contrato  
+- [ ] Compilou execução `v1.08` + viz  
+- [ ] Automação na **sim** · **M5** · máx posição **3** · `SeedCapital` preenchido  
 - [ ] Regra de coloração `RegimeRouterWDO_viz` no gráfico  
-- [ ] STOP alinhado ao saldo da sim  
+- [ ] STOP + sizing alinhados ao saldo da sim (`SeedCapital`)  
 - [ ] Em dia R2: VF ainda pode entrar se dist/ADX baterem  
 - [ ] Se um módulo sangrar → `Enable* = 0` (**uma** flag)
 
