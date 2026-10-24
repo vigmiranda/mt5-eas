@@ -71,7 +71,7 @@ A Clear (B3) muitas vezes **não reporta** equity/balance confiável no MT5. Por
 | Ativo | Timeframe | EA | Magic | Versão | Papel |
 |-------|-----------|----|-------|--------|-------|
 | XAUUSD | **M15** | **RegimeRouterXAU_v1** | 320932 | 1.00 | Roteador — **opera** |
-| ETHUSD | **M15** (ou M5) | **TrendAdvisorETH_v1** | 330933 | 1.00 | Advisor — **só analisa** (não abre ordem) |
+| ETHUSD | **H1** (ou M15) | **TrendAdvisorETH_v1** | 330933 | 1.01 | Tendência — sinal + **1 ordem** (não empilha) |
 
 Demais EAs Nomo (ScalpXAU, Pattern, Trend*, Grid BTC, etc.) estão em [`eas/nomo/archive/`](eas/nomo/archive/) — **não usar no real**.
 
@@ -82,18 +82,20 @@ Demais EAs Nomo (ScalpXAU, Pattern, Trend*, Grid BTC, etc.) estão em [`eas/nomo
 - Logs `Router: M15 …` a cada barra + telinha com regime/módulo/porque
 - Magic **320932**
 
-**TrendAdvisorETH_v1** — ETH 24x7, **zero ordens**
-- Default **M15** (`InpTF`; pode ser **M5**)
+**TrendAdvisorETH_v1** — ETH 24x7, sinal + execução (máx **1** posição)
+- Default **H1** (`InpTF`; M15 se quiser mais sinais)
 - Tendência: EMA20/50 + ADX≥20 → ALTA / BAIXA / LATERAL
-- **SINAL COMPRA/VENDA** só com pullback conveniente na EMA rápida + candle a favor
-- Sem setup: `PARECER: tendência de … — aguarde` (1 log por barra, prefixo `TA`)
-- Telinha no gráfico · magic **330933** (identificação; não opera)
+- **SINAL COMPRA/VENDA** + ordem a mercado só com pullback conveniente
+- Defaults execução (print Nomo): lote **0,20** · SL **4252** pts · TP **5473** pts
+- Se já houver posição/pendente do magic → **não abre outra**
+- Sem setup: `TA .. | … aguarde` · na entrada: `TA ! | EXECUTOU BUY/SELL …`
+- `InpEnableTrading=false` volta ao modo só-log · magic **330933**
 
 **Instalação**
 1. Arquivo: só use os EAs da tabela acima (resto em `archive/`)
-2. XAU: `RegimeRouterXAU_v1.mq5` → F7 → **XAUUSD M15**
-3. ETH: `TrendAdvisorETH_v1.mq5` → F7 → **ETHUSD M15** (Algotrading pode ficar off — ele não envia ordem)
-4. Logs: `RegimeRouterXAU v1.00` · `TrendAdvisorETH v1.00` / `TA !` (sinal) / `TA ..` (aguarde)
+2. XAU: `RegimeRouterXAU_v1.mq5` → F7 → **XAUUSD M15** (se for usar)
+3. ETH: `TrendAdvisorETH_v1.mq5` → F7 → **ETHUSD H1** · Algotrading **ON**
+4. Logs: `TrendAdvisorETH v1.01` / `TA !` (sinal+exec) / `TA ..` (aguarde / já em posição)
 
 ---
 
@@ -140,7 +142,7 @@ eas/
     archive/
   nomo/
     RegimeRouterXAU_v1.mq5   # Nomo / XAU (opera)
-    TrendAdvisorETH_v1.mq5   # Nomo / ETH (só analisa)
+    TrendAdvisorETH_v1.mq5   # Nomo / ETH (sinal + 1 ordem)
     archive/
   genial/
     RegimeRouterWDO_v1.ntsl   # execução (Automação)
